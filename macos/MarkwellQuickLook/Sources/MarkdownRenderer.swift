@@ -91,7 +91,12 @@ func renderMarkdown(_ source: String) -> String {
             var items: [String] = []
             while i < lines.count && isUnorderedListItem(lines[i]) {
                 let content = lines[i].replacingFirst(of: #"^[\-\*\+]\s+"#, with: "")
-                items.append("<li>\(renderInline(content))</li>")
+                if let (checked, label) = parseTaskItem(content) {
+                    let checkedAttr = checked ? " checked" : ""
+                    items.append("<li><input type=\"checkbox\" disabled\(checkedAttr)> \(renderInline(label))</li>")
+                } else {
+                    items.append("<li>\(renderInline(content))</li>")
+                }
                 i += 1
             }
             blocks.append("<ul>\n\(items.joined(separator: "\n"))\n</ul>")
@@ -103,7 +108,12 @@ func renderMarkdown(_ source: String) -> String {
             var items: [String] = []
             while i < lines.count && isOrderedListItem(lines[i]) {
                 let content = lines[i].replacingFirst(of: #"^\d+\.\s+"#, with: "")
-                items.append("<li>\(renderInline(content))</li>")
+                if let (checked, label) = parseTaskItem(content) {
+                    let checkedAttr = checked ? " checked" : ""
+                    items.append("<li><input type=\"checkbox\" disabled\(checkedAttr)> \(renderInline(label))</li>")
+                } else {
+                    items.append("<li>\(renderInline(content))</li>")
+                }
                 i += 1
             }
             blocks.append("<ol>\n\(items.joined(separator: "\n"))\n</ol>")
@@ -168,6 +178,23 @@ private func isUnorderedListItem(_ line: String) -> Bool {
 
 private func isOrderedListItem(_ line: String) -> Bool {
     line.range(of: #"^\d+\.\s+"#, options: .regularExpression) != nil
+}
+
+private func parseTaskItem(_ content: String) -> (Bool, String)? {
+    guard content.count >= 4 else { return nil }
+    guard content.hasPrefix("[") else { return nil }
+
+    let chars = Array(content)
+    guard chars.count >= 4, chars[2] == "]", chars[3] == " " else { return nil }
+
+    switch chars[1] {
+    case " ":
+        return (false, String(chars.dropFirst(4)))
+    case "x", "X":
+        return (true, String(chars.dropFirst(4)))
+    default:
+        return nil
+    }
 }
 
 private func parseTableRow(_ line: String) -> [String]? {

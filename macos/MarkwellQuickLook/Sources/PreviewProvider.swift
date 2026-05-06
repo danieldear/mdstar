@@ -89,6 +89,17 @@ private func htmlDocument(from source: String, fileName: String, fileExtension e
           blockquote p { margin: 0.25em 0; }
           ul, ol { margin: 0.75em 0; padding-left: 2em; }
           li { margin: 0.3em 0; }
+          li input[type="checkbox"] {
+            appearance: auto;
+            -webkit-appearance: checkbox;
+            width: 14px;
+            height: 14px;
+            margin-right: 0.45em;
+            vertical-align: -2px;
+            accent-color: #0a84ff;
+            opacity: 1;
+          }
+          li input[type="checkbox"][disabled] { opacity: 0.95; }
           hr {
             border: none;
             border-top: 1px solid color-mix(in oklab, CanvasText 15%, Canvas);
@@ -99,7 +110,7 @@ private func htmlDocument(from source: String, fileName: String, fileExtension e
             width: 100%;
             border-collapse: collapse;
             margin: 1em 0;
-            table-layout: auto;
+            table-layout: fixed;
           }
           th, td {
             border: 1px solid color-mix(in oklab, CanvasText 18%, Canvas);
@@ -108,10 +119,23 @@ private func htmlDocument(from source: String, fileName: String, fileExtension e
             vertical-align: top;
             white-space: normal;
             overflow-wrap: anywhere;
+            word-break: break-word;
           }
           th {
             background: color-mix(in oklab, CanvasText 5%, Canvas);
             font-weight: 600;
+          }
+          th code, td code {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+          }
+          th pre, td pre {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            overflow-x: clip;
+            margin: 0.4em 0;
           }
           .mermaid-diagram {
             margin: 1em 0;
