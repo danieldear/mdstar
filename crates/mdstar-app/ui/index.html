@@ -775,7 +775,7 @@
         <div class="welcome" id="welcome">
           <div class="welcome-icon">📄</div>
           <h2>MD Star</h2>
-          <p>Open a Markdown file to start reading.<br>Drag and drop anywhere, or click below.</p>
+          <p>Open a document to start reading.<br>Drag and drop anywhere, or click below.</p>
           <button class="welcome-cta" id="btn-open-welcome">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d="M1.5 4.5h4l1.5 2h7.5v7h-13v-9z"/>
@@ -821,6 +821,11 @@
   let workspaceFiles = [];
   let previewTimer  = null;
   const backHistory = [];
+  const appRenderableExts = new Set([
+    'md','markdown','txt','text','json','xml','yaml','yml','toml','csv',
+    'rs','kt','kts','py','js','jsx','ts','tsx','java','go','c','h','cpp','hpp',
+    'cs','swift','sh','bash','zsh','ini','conf','sql','log'
+  ]);
 
   const $ = id => document.getElementById(id);
 
@@ -916,7 +921,7 @@
   async function livePreview() {
     const source = $('editor-textarea').value;
     try {
-      const r = await invoke('render_source', { source });
+      const r = await invoke('render_source', { source, path: currentPath });
       updateContent(r);
     } catch (_) {}
   }
@@ -946,7 +951,7 @@
     if (!targetPath) return;
 
     const ext = targetPath.split('.').pop()?.toLowerCase();
-    if (['md', 'markdown', 'txt'].includes(ext)) {
+    if (ext && appRenderableExts.has(ext)) {
       await loadFile(targetPath, options);
       return;
     }
@@ -1069,7 +1074,7 @@
     }
 
     const ext = raw.split('.').pop()?.toLowerCase();
-    return ['md', 'markdown', 'txt'].includes(ext) ? raw : '';
+    return ext && appRenderableExts.has(ext) ? raw : '';
   }
 
   // ── Render ────────────────────────────────────────────────────────────────

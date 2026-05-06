@@ -12,7 +12,11 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
     ) {
         do {
             let source = try String(contentsOf: request.fileURL, encoding: .utf8)
-            let html = htmlDocument(from: source, fileName: request.fileURL.lastPathComponent)
+            let html = htmlDocument(
+                from: source,
+                fileName: request.fileURL.lastPathComponent,
+                fileExtension: request.fileURL.pathExtension.lowercased()
+            )
             let htmlData = Data(html.utf8)
             let size = CGSize(width: 1100, height: 1600)
             let reply = QLPreviewReply(
@@ -26,8 +30,8 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
     }
 }
 
-private func htmlDocument(from markdown: String, fileName: String) -> String {
-    let body = renderMarkdown(markdown)
+private func htmlDocument(from source: String, fileName: String, fileExtension ext: String) -> String {
+    let body = renderDocumentBody(source: source, ext: ext)
     return """
     <!doctype html>
     <html lang="en">
@@ -157,4 +161,107 @@ private func htmlDocument(from markdown: String, fileName: String) -> String {
       </body>
     </html>
     """
+}
+
+private func renderDocumentBody(source: String, ext: String) -> String {
+    switch ext {
+    case "md", "markdown", "mdown", "mkd", "mdtxt":
+        return renderMarkdown(source)
+    case "csv":
+        if let table = renderCSVTable(source) {
+            return table
+        }
+        return renderCodeBlock(source: source, language: ext)
+    default:
+        return renderCodeBlock(source: formatSource(source: source, ext: ext), language: ext)
+    }
+}
+
+private func renderCodeBlock(source: String, language: String) -> String {
+    "<pre><code class=\"language-\(escapeHTML(language))\">\(escapeHTML(source))</code></pre>"
+}
+
+private func formatSource(source: String, ext: String) -> String {
+    switch ext {
+    case "json":
+        guard
+            let data = source.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data),
+            let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+            let text = String(data: pretty, encoding: .utf8)
+        else { return source }
+        return text
+    case "xml":
+        guard
+            let doc = try? XMLDocument(xmlString: source, options: [])
+        else { return source }
+        return doc.xmlString(options: [.nodePrettyPrint])
+    case "yml", "yaml", "toml":
+        return source
+    default:
+        return source
+    }
+}
+
+private func renderCSVTable(_ source: String) -> String? {
+    let rows = source
+        .split(whereSeparator: \.isNewline)
+        .map { parseCSVRow(String($0)) }
+        .filter { !$0.isEmpty }
+
+    guard let header = rows.first else { return nil }
+    let bodyRows = rows.dropFirst()
+
+    var html = "<table><thead><tr>"
+    for cell in header {
+        html += "<th>\(escapeHTML(cell))</th>"
+    }
+    html += "</tr></thead><tbody>"
+
+    for row in bodyRows {
+        html += "<tr>"
+        for index in header.indices {
+            let cell = index < row.count ? row[index] : ""
+            html += "<td>\(escapeHTML(cell))</td>"
+        }
+        html += "</tr>"
+    }
+
+    html += "</tbody></table>"
+    return html
+}
+
+private func parseCSVRow(_ line: String) -> [String] {
+    var cells: [String] = []
+    var current = ""
+    var inQuotes = false
+    var i = line.startIndex
+
+    while i < line.endIndex {
+        let ch = line[i]
+        if ch == "\"" {
+            let next = line.index(after: i)
+            if inQuotes, next < line.endIndex, line[next] == "\"" {
+                current.append("\"")
+                i = line.index(after: next)
+                continue
+            }
+            inQuotes.toggle()
+            i = next
+            continue
+        }
+
+        if ch == ",", !inQuotes {
+            cells.append(current)
+            current.removeAll(keepingCapacity: true)
+            i = line.index(after: i)
+            continue
+        }
+
+        current.append(ch)
+        i = line.index(after: i)
+    }
+
+    cells.append(current)
+    return cells
 }

@@ -63,6 +63,24 @@
         "mimeType": "text/plain",
         "role": "Viewer",
         "rank": "Alternate"
+      },
+      {
+        "ext": ["json", "xml", "yaml", "yml", "toml", "csv"],
+        "contentTypes": ["public.text", "public.plain-text"],
+        "name": "Structured Text (MD Star)",
+        "description": "Structured text document",
+        "mimeType": "text/plain",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["rs", "kt", "kts", "py", "js", "jsx", "ts", "tsx", "java", "go", "c", "h", "cpp", "hpp", "cs", "swift", "sh", "bash", "zsh", "ini", "conf", "sql", "log"],
+        "contentTypes": ["public.text", "public.plain-text"],
+        "name": "Source Code (MD Star)",
+        "description": "Source code document",
+        "mimeType": "text/plain",
+        "role": "Viewer",
+        "rank": "Alternate"
       }
     ],
     "macOS": {

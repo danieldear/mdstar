@@ -8,6 +8,46 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, mpsc};
 use tauri::{Emitter, Manager, State, WebviewWindow};
 
+const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mdtxt"];
+const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "md",
+    "markdown",
+    "mdown",
+    "mkd",
+    "mdtxt",
+    "txt",
+    "text",
+    "json",
+    "xml",
+    "yaml",
+    "yml",
+    "toml",
+    "csv",
+    "rs",
+    "kt",
+    "kts",
+    "py",
+    "js",
+    "jsx",
+    "ts",
+    "tsx",
+    "java",
+    "go",
+    "c",
+    "h",
+    "cpp",
+    "hpp",
+    "cs",
+    "swift",
+    "sh",
+    "bash",
+    "zsh",
+    "ini",
+    "conf",
+    "sql",
+    "log",
+];
+
 // ─── Data types sent to the frontend ─────────────────────────────────────────
 
 #[derive(Debug, Serialize, Clone)]
@@ -50,16 +90,25 @@ struct OpenPathsState(Mutex<Vec<String>>);
 async fn render_file(path: String) -> Result<RenderResult, String> {
     let path_buf = PathBuf::from(&path);
     let source = fs::read_to_string(&path_buf).map_err(|e| format!("could not read file: {e}"))?;
-
-    let output =
-        parse_markdown_with_diagnostics(&source).map_err(|e| format!("parse error: {e}"))?;
-
-    let html = render_html(&output.document);
-    let headings = extract_headings(&output.document);
+    let ext = normalized_extension(&path_buf);
+    let (html, headings, warning_count) = if is_markdown_extension(ext.as_deref()) {
+        let output =
+            parse_markdown_with_diagnostics(&source).map_err(|e| format!("parse error: {e}"))?;
+        (
+            render_html(&output.document),
+            extract_headings(&output.document),
+            output.diagnostics.len(),
+        )
+    } else {
+        (
+            render_non_markdown_source(&source, ext.as_deref()),
+            Vec::new(),
+            0,
+        )
+    };
     let word_count = source.split_whitespace().count();
     let line_count = source.lines().count();
     let read_minutes = (word_count / 200).max(1);
-    let warning_count = output.diagnostics.len();
 
     let file_name = path_buf
         .file_name()
@@ -80,16 +129,30 @@ async fn render_file(path: String) -> Result<RenderResult, String> {
 }
 
 #[tauri::command]
-async fn render_source(source: String) -> Result<RenderResult, String> {
-    let output =
-        parse_markdown_with_diagnostics(&source).map_err(|e| format!("parse error: {e}"))?;
+async fn render_source(source: String, path: Option<String>) -> Result<RenderResult, String> {
+    let ext = path
+        .as_deref()
+        .map(PathBuf::from)
+        .and_then(|p| normalized_extension(&p));
 
-    let html = render_html(&output.document);
-    let headings = extract_headings(&output.document);
+    let (html, headings, warning_count) = if is_markdown_extension(ext.as_deref()) {
+        let output =
+            parse_markdown_with_diagnostics(&source).map_err(|e| format!("parse error: {e}"))?;
+        (
+            render_html(&output.document),
+            extract_headings(&output.document),
+            output.diagnostics.len(),
+        )
+    } else {
+        (
+            render_non_markdown_source(&source, ext.as_deref()),
+            Vec::new(),
+            0,
+        )
+    };
     let word_count = source.split_whitespace().count();
     let line_count = source.lines().count();
     let read_minutes = (word_count / 200).max(1);
-    let warning_count = output.diagnostics.len();
 
     Ok(RenderResult {
         html,
@@ -99,8 +162,12 @@ async fn render_source(source: String) -> Result<RenderResult, String> {
         line_count,
         read_minutes,
         warning_count,
-        file_name: String::new(),
-        path: String::new(),
+        file_name: path
+            .as_deref()
+            .and_then(|p| Path::new(p).file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        path: path.unwrap_or_default(),
     })
 }
 
@@ -112,8 +179,9 @@ async fn save_file(path: String, content: String) -> Result<(), String> {
 #[tauri::command]
 async fn pick_file() -> Option<String> {
     rfd::AsyncFileDialog::new()
-        .set_title("Open Markdown File")
-        .add_filter("Markdown", &["md", "markdown", "txt"])
+        .set_title("Open File")
+        .add_filter("Supported", SUPPORTED_EXTENSIONS)
+        .add_filter("Markdown", MARKDOWN_EXTENSIONS)
         .pick_file()
         .await
         .map(|f| f.path().to_string_lossy().to_string())
@@ -266,13 +334,122 @@ fn queue_open_paths(queue: &mut Vec<String>, paths: &[String]) {
 }
 
 fn is_supported_document(path: &Path) -> bool {
+    normalized_extension(path)
+        .map(|ext| SUPPORTED_EXTENSIONS.contains(&ext.as_str()))
+        .unwrap_or(false)
+}
+
+fn normalized_extension(path: &Path) -> Option<String> {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| {
-            let ext = ext.to_ascii_lowercase();
-            matches!(ext.as_str(), "md" | "markdown" | "txt")
-        })
-        .unwrap_or(false)
+        .map(|ext| ext.to_ascii_lowercase())
+}
+
+fn is_markdown_extension(ext: Option<&str>) -> bool {
+    ext.is_some_and(|ext| MARKDOWN_EXTENSIONS.contains(&ext))
+}
+
+fn render_non_markdown_source(source: &str, ext: Option<&str>) -> String {
+    match ext {
+        Some("csv") => render_csv_table(source).unwrap_or_else(|| render_code_block(source, ext)),
+        _ => render_code_block(&format_source(source, ext), ext),
+    }
+}
+
+fn render_code_block(source: &str, ext: Option<&str>) -> String {
+    let class_name = ext
+        .map(|ext| format!("language-{}", escape_html_attr(ext)))
+        .unwrap_or_else(|| "language-text".to_string());
+    format!(
+        "<pre><code class=\"{class_name}\">{}</code></pre>\n",
+        escape_html_text(source)
+    )
+}
+
+fn format_source(source: &str, ext: Option<&str>) -> String {
+    match ext {
+        Some("json") => serde_json::from_str::<serde_json::Value>(source)
+            .ok()
+            .and_then(|value| serde_json::to_string_pretty(&value).ok())
+            .unwrap_or_else(|| source.to_string()),
+        Some("toml") => toml::from_str::<toml::Value>(source)
+            .ok()
+            .and_then(|value| toml::to_string_pretty(&value).ok())
+            .unwrap_or_else(|| source.to_string()),
+        Some("yaml") | Some("yml") => serde_yaml::from_str::<serde_yaml::Value>(source)
+            .ok()
+            .and_then(|value| serde_yaml::to_string(&value).ok())
+            .map(|formatted| {
+                formatted
+                    .strip_prefix("---\n")
+                    .map(ToString::to_string)
+                    .unwrap_or(formatted)
+            })
+            .unwrap_or_else(|| source.to_string()),
+        Some("xml") => format_xml(source).unwrap_or_else(|| source.to_string()),
+        _ => source.to_string(),
+    }
+}
+
+fn format_xml(source: &str) -> Option<String> {
+    let element = xmltree::Element::parse(source.as_bytes()).ok()?;
+    let mut out = Vec::new();
+    let config = xmltree::EmitterConfig::new()
+        .perform_indent(true)
+        .write_document_declaration(false);
+    element.write_with_config(&mut out, config).ok()?;
+    String::from_utf8(out).ok()
+}
+
+fn render_csv_table(source: &str) -> Option<String> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(source.as_bytes());
+    let rows = reader
+        .records()
+        .filter_map(Result::ok)
+        .map(|record| record.iter().map(ToString::to_string).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+
+    if rows.is_empty() {
+        return None;
+    }
+
+    let headers = &rows[0];
+    let body = &rows[1..];
+
+    let mut html = String::from("<table>\n<thead><tr>");
+    for header in headers {
+        html.push_str("<th>");
+        html.push_str(&escape_html_text(header));
+        html.push_str("</th>");
+    }
+    html.push_str("</tr></thead>\n<tbody>\n");
+
+    for row in body {
+        html.push_str("<tr>");
+        for idx in 0..headers.len() {
+            let cell = row.get(idx).map(String::as_str).unwrap_or("");
+            html.push_str("<td>");
+            html.push_str(&escape_html_text(cell));
+            html.push_str("</td>");
+        }
+        html.push_str("</tr>\n");
+    }
+
+    html.push_str("</tbody>\n</table>\n");
+    Some(html)
+}
+
+fn escape_html_text(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn escape_html_attr(input: &str) -> String {
+    escape_html_text(input).replace('"', "&quot;")
 }
 
 fn emit_open_paths<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, paths: Vec<PathBuf>) {
@@ -384,7 +561,10 @@ fn apply_macos_window_style(window: &WebviewWindow) {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_startup_file_paths, normalize_supported_paths, queue_open_paths};
+    use super::{
+        collect_startup_file_paths, normalize_supported_paths, queue_open_paths,
+        render_non_markdown_source,
+    };
     use std::ffi::OsString;
     use std::path::PathBuf;
 
@@ -394,10 +574,14 @@ mod tests {
             OsString::from("-psn_0_12345"),
             OsString::from("--app"),
             OsString::from("/tmp/notes.md"),
+            OsString::from("/tmp/data.json"),
             OsString::from("/tmp/image.png"),
             OsString::from("/tmp/readme.MARKDOWN"),
         ]);
-        assert_eq!(paths, vec!["/tmp/notes.md", "/tmp/readme.MARKDOWN"]);
+        assert_eq!(
+            paths,
+            vec!["/tmp/notes.md", "/tmp/data.json", "/tmp/readme.MARKDOWN"]
+        );
     }
 
     #[test]
@@ -420,11 +604,19 @@ mod tests {
             OsString::from("/tmp/doc.Md"),
             OsString::from("/tmp/wiki.MarkDown"),
             OsString::from("/tmp/note.TXT"),
+            OsString::from("/tmp/spec.RS"),
+            OsString::from("/tmp/data.JsOn"),
             OsString::from("/tmp/photo.jpg"),
         ]);
         assert_eq!(
             paths,
-            vec!["/tmp/doc.Md", "/tmp/wiki.MarkDown", "/tmp/note.TXT"]
+            vec![
+                "/tmp/doc.Md",
+                "/tmp/wiki.MarkDown",
+                "/tmp/note.TXT",
+                "/tmp/spec.RS",
+                "/tmp/data.JsOn"
+            ]
         );
     }
 
@@ -435,10 +627,18 @@ mod tests {
             PathBuf::from("/tmp/2.png"),
             PathBuf::from("/tmp/3.markdown"),
             PathBuf::from("/tmp/4.txt"),
+            PathBuf::from("/tmp/5.xml"),
+            PathBuf::from("/tmp/6.yaml"),
         ]);
         assert_eq!(
             normalized,
-            vec!["/tmp/1.md", "/tmp/3.markdown", "/tmp/4.txt"]
+            vec![
+                "/tmp/1.md",
+                "/tmp/3.markdown",
+                "/tmp/4.txt",
+                "/tmp/5.xml",
+                "/tmp/6.yaml"
+            ]
         );
     }
 
@@ -451,5 +651,28 @@ mod tests {
             queue,
             vec!["/tmp/existing.md", "/tmp/new-a.md", "/tmp/new-b.txt"]
         );
+    }
+
+    #[test]
+    fn non_markdown_json_is_pretty_printed_as_code_block() {
+        let html = render_non_markdown_source("{\"b\":2,\"a\":1}", Some("json"));
+        assert!(html.contains("<pre><code class=\"language-json\">"));
+        assert!(html.contains("\n  \"a\": 1,\n"));
+    }
+
+    #[test]
+    fn non_markdown_toml_is_pretty_printed_as_code_block() {
+        let html = render_non_markdown_source("b=2\na=1\n", Some("toml"));
+        assert!(html.contains("<pre><code class=\"language-toml\">"));
+        assert!(html.contains("a = 1"));
+        assert!(html.contains("b = 2"));
+    }
+
+    #[test]
+    fn non_markdown_csv_renders_as_html_table() {
+        let html = render_non_markdown_source("name,role\nneo,dev\n", Some("csv"));
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<th>name</th>"));
+        assert!(html.contains("<td>neo</td>"));
     }
 }

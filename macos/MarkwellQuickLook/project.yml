@@ -34,6 +34,16 @@ targets:
               - "net.daringfireball.markdown"
               - "public.plain-text"
               - "public.text"
+              - "public.json"
+              - "public.xml"
+              - "public.yaml"
+              - "public.toml"
+              - "public.comma-separated-values-text"
+              - "public.delimited-values-text"
+              - "public.source-code"
+              - "org.iso.sql"
+              - "com.microsoft.ini"
+              - "org.rust-lang.rust-script"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mdstar.desktop.quicklook
