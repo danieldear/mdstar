@@ -6,6 +6,29 @@ MD Star is moving its macOS presentation from the Tauri/WebView desktop frontend
 
 `macos/MDStarNative` is a macOS 13+ SwiftUI application. It provides a persistent workspace sidebar, recursive file tree, separate document structure outline, native toolbar/breadcrumbs/history, responsive semantic document rendering, and a collapsible inspector shell.
 
+### Delivered (reader)
+
+The reader is styled after the Mud viewer with the system accent color:
+
+- Correct inline formatting from the IR — bold, italic, strikethrough, inline
+  code, links — plus block images, task lists, blockquotes, `Grid`-based tables,
+  and borderless code blocks with a dependency-free syntax highlighter.
+- A **free-flowing, title-less window** (`.hiddenTitleBar`) with a **floating
+  Liquid Glass toolbar** (`glassEffect` on macOS 26, material fallback below) that
+  the document scrolls beneath.
+- Sidebar: search, workspace tree, and a badge-free outline whose active section
+  tracks scroll position; section **bookmarks** persisted per document.
+- **Split / View** modes (read-only source view with a line-number gutter), Space
+  to toggle, in-page anchor links, and a **floating find widget** (bottom-center,
+  ⌘F) with match highlighting.
+
+### Deferred (needs a richer text engine)
+
+- **Highlights and comments** anchor to arbitrary text selections, which SwiftUI's
+  `Text` cannot report. They require moving the reader to a TextKit/`NSTextView`
+  layer; the inspector currently states this instead of exposing dead controls.
+- Real editing in Edit/Split (currently source is read-only).
+
 ~~~text
 Workspace root
   ├─ Rust DocumentIR v1 (semantic JSON, IDs, source ranges)
