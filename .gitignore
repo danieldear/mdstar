@@ -14,3 +14,6 @@
 
 # Quick Look local build artifacts
 /macos/MarkwellQuickLook/.build/
+
+/dist/
+/macos/MDStarNative/.build/
