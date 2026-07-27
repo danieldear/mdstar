@@ -35,6 +35,7 @@ final class WorkspaceStore: ObservableObject {
 
     private let service = RustDocumentService()
     private let bookmarkStore = SecurityScopedBookmarkStore()
+    private let fileWatcher = FileWatcher()
     private let workspaceKey = "mdstar.native.workspace.path"
     private let selectedFileKey = "mdstar.native.workspace.selectedFile"
     private var scopedWorkspaceURL: URL?
@@ -107,6 +108,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func closeWorkspace() {
+        fileWatcher.stop()
         scopedWorkspaceURL?.stopAccessingSecurityScopedResource()
         scopedWorkspaceURL = nil
         workspaceURL = nil
@@ -145,6 +147,13 @@ final class WorkspaceStore: ObservableObject {
                 self.selectedURL = normalized
                 self.loadBookmarks(for: normalized)
                 self.resetFind()
+                // Auto-reload when the open file changes on disk. Starting a
+                // new watch stops any previous one, so switching documents
+                // rebinds cleanly.
+                self.fileWatcher.start(url: normalized) { [weak self] in
+                    guard let self, self.selectedURL == normalized else { return }
+                    self.reload()
+                }
                 UserDefaults.standard.set(normalized.path, forKey: self.selectedFileKey)
                 if recordHistory { NotificationCenter.default.post(name: .mdstarOpenedDocument, object: normalized) }
             case .failure(let error):
