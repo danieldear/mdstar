@@ -135,20 +135,44 @@ enum InlineRenderer {
         return raw.removingPercentEncoding ?? String(raw)
     }
 
-    /// Resolves link targets, keeping absolute URLs intact and rooting relative
-    /// links against the document's origin directory.
+    /// Resolves link and image targets. Web/scheme URLs pass through; local
+    /// file references are percent-decoded, tilde-expanded, and rooted against
+    /// the document's directory, then standardized so `NSImage`/openers get a
+    /// clean absolute file URL.
     static func resolvedURL(_ raw: String?, origin: String) -> URL? {
         guard let raw, !raw.isEmpty else { return nil }
+
+        // In-page anchor (`#heading`).
         if raw.hasPrefix("#") {
             let slug = String(raw.dropFirst()).lowercased()
             let encoded = slug.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? slug
             return URL(string: "\(anchorScheme):\(encoded)")
         }
-        if let absolute = URL(string: raw), absolute.scheme != nil { return absolute }
+
+        // Absolute non-file scheme (http, https, mailto, …).
+        if let absolute = URL(string: raw), let scheme = absolute.scheme, scheme != "file" {
+            return absolute
+        }
+
+        // Explicit file URL.
+        if raw.hasPrefix("file://"), let fileURL = URL(string: raw) {
+            return fileURL.standardizedFileURL
+        }
+
+        // Local path: markdown may percent-encode spaces, so decode first.
+        let path = raw.removingPercentEncoding ?? raw
+
+        if path.hasPrefix("~") {
+            return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
+        }
+        if path.hasPrefix("/") {
+            return URL(fileURLWithPath: path).standardizedFileURL
+        }
+
+        // Relative to the document's directory.
         guard origin.hasPrefix("/") || origin.hasPrefix("file://") else { return URL(string: raw) }
-        let originURL = origin.hasPrefix("file://")
-            ? URL(string: origin)
-            : URL(fileURLWithPath: origin)
-        return URL(fileURLWithPath: raw, relativeTo: originURL?.deletingLastPathComponent())
+        let originURL = origin.hasPrefix("file://") ? URL(string: origin) : URL(fileURLWithPath: origin)
+        guard let base = originURL?.deletingLastPathComponent() else { return URL(string: raw) }
+        return URL(fileURLWithPath: path, relativeTo: base).standardizedFileURL
     }
 }

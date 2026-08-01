@@ -22,6 +22,11 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var focusedBlockID: String?
     @Published private(set) var activeHeadingID: String?
     @Published private(set) var rawText: String = ""
+    @Published private(set) var isDirty = false
+    /// URLs currently open in this window. Documents load on selection so the
+    /// workspace remains responsive even with many large files open.
+    @Published private(set) var openDocumentURLs: [URL] = []
+    @Published private(set) var selectedTabURL: URL?
     @Published var viewMode: ReaderViewMode = .view
 
     // In-document find
@@ -41,6 +46,9 @@ final class WorkspaceStore: ObservableObject {
     private var scopedWorkspaceURL: URL?
     private var workspaceOperation = 0
     private var documentOperation = 0
+    private var sourceRevision = 0
+    private var sourceParseTask: Task<Void, Never>?
+    private var autoSaveTask: Task<Void, Never>?
 
     init() {
         let defaults = UserDefaults.standard
@@ -108,13 +116,18 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func closeWorkspace() {
+        guard save() else { return }
         fileWatcher.stop()
         scopedWorkspaceURL?.stopAccessingSecurityScopedResource()
         scopedWorkspaceURL = nil
         workspaceURL = nil
         fileTree = nil
         selectedURL = nil
+        selectedTabURL = nil
+        openDocumentURLs = []
         document = nil
+        rawText = ""
+        bookmarks = []
         UserDefaults.standard.removeObject(forKey: workspaceKey)
         UserDefaults.standard.removeObject(forKey: selectedFileKey)
         bookmarkStore.remove()
@@ -123,6 +136,8 @@ final class WorkspaceStore: ObservableObject {
 
     func openFile(_ url: URL, recordHistory: Bool) {
         let normalized = url.standardizedFileURL
+        if selectedURL != normalized, isDirty, !save() { return }
+        cancelEditingTasks()
         isLoading = true
         errorMessage = nil
         documentOperation += 1
@@ -143,15 +158,20 @@ final class WorkspaceStore: ObservableObject {
             case .success(let loaded):
                 self.document = loaded.ir
                 self.rawText = loaded.rawText
+                self.isDirty = false
                 self.activeHeadingID = loaded.ir.outline.first?.id
                 self.selectedURL = normalized
+                self.selectedTabURL = normalized
+                if !self.openDocumentURLs.contains(normalized) {
+                    self.openDocumentURLs.append(normalized)
+                }
                 self.loadBookmarks(for: normalized)
                 self.resetFind()
                 // Auto-reload when the open file changes on disk. Starting a
                 // new watch stops any previous one, so switching documents
                 // rebinds cleanly.
                 self.fileWatcher.start(url: normalized) { [weak self] in
-                    guard let self, self.selectedURL == normalized else { return }
+                    guard let self, !self.isDirty, self.selectedURL == normalized else { return }
                     self.reload()
                 }
                 UserDefaults.standard.set(normalized.path, forKey: self.selectedFileKey)
@@ -162,15 +182,141 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func selectTab(_ url: URL) {
+        let normalized = url.standardizedFileURL
+        guard openDocumentURLs.contains(normalized), selectedURL != normalized else { return }
+        openFile(normalized, recordHistory: true)
+    }
+
+    func closeTab(_ url: URL) {
+        let normalized = url.standardizedFileURL
+        guard let closingIndex = openDocumentURLs.firstIndex(of: normalized) else { return }
+        let wasSelected = selectedURL == normalized
+        if wasSelected, isDirty, !save() { return }
+        openDocumentURLs.remove(at: closingIndex)
+
+        guard wasSelected else { return }
+        guard !openDocumentURLs.isEmpty else {
+            clearOpenDocument()
+            return
+        }
+
+        let nextIndex = min(closingIndex, openDocumentURLs.count - 1)
+        openFile(openDocumentURLs[nextIndex], recordHistory: false)
+    }
+
+    private func clearOpenDocument() {
+        fileWatcher.stop()
+        selectedURL = nil
+        selectedTabURL = nil
+        document = nil
+        rawText = ""
+        isDirty = false
+        errorMessage = nil
+        activeHeadingID = nil
+        focusedBlockID = nil
+        bookmarks = []
+        resetFind()
+        UserDefaults.standard.removeObject(forKey: selectedFileKey)
+    }
+
     func setActiveHeading(_ id: String?) {
         guard activeHeadingID != id else { return }
         activeHeadingID = id
     }
 
-    /// Spacebar behavior inspired by Mud: flip between reading and split (source)
-    /// views.
+    /// Switch between rendered reading and the editable source split view.
     func toggleSourcePreview() {
         viewMode = viewMode == .view ? .split : .view
+    }
+
+    // MARK: - Editing and saving
+
+    /// Updates the in-memory source immediately, then debounces parsing and
+    /// saving so split preview remains responsive while typing.
+    func updateSource(_ source: String) {
+        guard rawText != source else { return }
+        rawText = source
+        isDirty = true
+        sourceRevision += 1
+
+        scheduleLivePreview(source, revision: sourceRevision)
+        scheduleAutosave(revision: sourceRevision)
+    }
+
+    /// Saves the current source atomically. Returns false when disk write
+    /// fails, allowing tab/workspace changes to keep the editor open instead
+    /// of silently dropping unsaved work.
+    @discardableResult
+    func save() -> Bool {
+        guard isDirty else { return true }
+        guard let selectedURL else { return false }
+
+        do {
+            try rawText.write(to: selectedURL, atomically: true, encoding: .utf8)
+            isDirty = false
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = "Could not save \(selectedURL.lastPathComponent): \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func scheduleLivePreview(_ source: String, revision: Int) {
+        sourceParseTask?.cancel()
+        let origin = selectedURL?.path ?? "untitled.md"
+        let service = service
+
+        sourceParseTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 140_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+
+            let result: Result<DocumentIR, BackgroundFailure> = await Task.detached(priority: .userInitiated) {
+                do {
+                    return .success(try service.parseDocument(source, origin: origin))
+                } catch {
+                    return .failure(BackgroundFailure(message: error.localizedDescription))
+                }
+            }.value
+
+            guard let self, !Task.isCancelled, self.sourceRevision == revision else { return }
+            switch result {
+            case .success(let document):
+                self.document = document
+                self.activeHeadingID = document.outline.first?.id
+                if self.isFindPresented { self.recomputeFind() }
+            case .failure(let error):
+                // Keep the last valid preview visible while the user is in the
+                // middle of temporarily incomplete Markdown input.
+                self.errorMessage = error.message
+            }
+        }
+    }
+
+    private func scheduleAutosave(revision: Int) {
+        autoSaveTask?.cancel()
+        autoSaveTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 750_000_000)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled, self.sourceRevision == revision else { return }
+            _ = self.save()
+        }
+    }
+
+    private func cancelEditingTasks() {
+        sourceRevision += 1
+        sourceParseTask?.cancel()
+        autoSaveTask?.cancel()
+        sourceParseTask = nil
+        autoSaveTask = nil
     }
 
     // MARK: - Find
@@ -310,6 +456,10 @@ final class WorkspaceStore: ObservableObject {
 
     func reload() {
         guard let selectedURL else { return }
+        guard !isDirty else { return }
+        if let diskText = try? String(contentsOf: selectedURL, encoding: .utf8), diskText == rawText {
+            return
+        }
         openFile(selectedURL, recordHistory: false)
     }
 }

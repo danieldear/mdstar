@@ -36,11 +36,9 @@ struct FindBar: View {
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.primary)
-        .padding(.horizontal, 11)
+        .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.readerHairline))
-        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+        .floatingGlass(Capsule())
         .onAppear { focused = true }
         .onExitCommand { workspace.dismissFind() }
     }

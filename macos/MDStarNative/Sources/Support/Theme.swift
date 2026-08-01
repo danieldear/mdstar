@@ -7,16 +7,12 @@ enum Theme {
     /// and centered; full-bleed blocks (tables, code) may exceed it.
     static let readerContentWidth: CGFloat = 740
 
-    /// Horizontal padding around the reader column.
+    /// Horizontal and vertical padding around the reader column.
     static let readerHorizontalPadding: CGFloat = 40
     static let readerVerticalPadding: CGFloat = 36
 
     /// Vertical rhythm between top-level blocks.
     static let blockSpacing: CGFloat = 18
-
-    /// Top clearance so content flows *under* the floating toolbar without the
-    /// first lines being hidden behind it.
-    static let floatingToolbarInset: CGFloat = 58
 
     /// Corner radius shared by cards, code blocks and tables.
     static let cornerRadius: CGFloat = 10
@@ -33,7 +29,6 @@ enum Theme {
             }
         }
 
-        /// Extra space above a heading, scaled so top-level sections breathe.
         static func topPadding(for level: Int) -> CGFloat {
             switch level {
             case 1: 8
@@ -52,8 +47,10 @@ extension Color {
     static var readerHairline: Color { Color.primary.opacity(0.12) }
 }
 
+
 extension View {
-    /// Liquid Glass on macOS 26+, with a material + hairline + shadow fallback.
+    /// Uses the system Liquid Glass material when it is available, with a
+    /// compact material fallback for earlier supported macOS versions.
     @ViewBuilder
     func floatingGlass<S: Shape>(_ shape: S) -> some View {
         if #available(macOS 26.0, *) {
@@ -62,7 +59,7 @@ extension View {
             self
                 .background(.regularMaterial, in: shape)
                 .overlay(shape.stroke(Color.readerHairline))
-                .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         }
     }
 }

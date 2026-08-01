@@ -15,7 +15,7 @@ struct MDStarApp: App {
                 .onOpenURL { url in workspace.openFile(url, recordHistory: true) }
                 .preferredColorScheme(AppearancePreference(rawValue: appearance)?.colorScheme)
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Open File…", action: workspace.chooseFile)
@@ -23,6 +23,9 @@ struct MDStarApp: App {
                 Button("Open Workspace…", action: workspace.chooseWorkspace)
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                 Divider()
+                Button("Save") { _ = workspace.save() }
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(!workspace.isDirty)
                 Button("Reload", action: workspace.reload)
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(workspace.selectedURL == nil)
@@ -41,7 +44,7 @@ struct MDStarApp: App {
                     .disabled(workspace.document == nil)
             }
             CommandMenu("View") {
-                Picker("Mode", selection: $workspace.viewMode) {
+                Picker("Reading Mode", selection: $workspace.viewMode) {
                     ForEach(ReaderViewMode.allCases) { mode in
                         Text(mode.title).tag(mode)
                     }
@@ -52,6 +55,11 @@ struct MDStarApp: App {
                 Button("Toggle Source") { if workspace.document != nil { workspace.toggleSourcePreview() } }
                     .keyboardShortcut("/", modifiers: .command)
                     .disabled(workspace.document == nil)
+                Divider()
+                Button(inspector.isVisible ? "Hide Inspector" : "Show Inspector") {
+                    inspector.isVisible.toggle()
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
             }
         }
 

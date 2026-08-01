@@ -35,14 +35,14 @@ struct DocumentRenderer: View {
                             .id(block.id)
                     }
 
-                    if !document.diagnostics.isEmpty {
-                        DiagnosticsView(diagnostics: document.diagnostics)
+                    if !errorDiagnostics.isEmpty {
+                        DiagnosticsView(diagnostics: errorDiagnostics)
                             .frame(maxWidth: Theme.readerContentWidth, alignment: .leading)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, Theme.readerHorizontalPadding)
-                .padding(.top, Theme.floatingToolbarInset)
+                .padding(.top, Theme.readerVerticalPadding)
                 .padding(.bottom, Theme.readerVerticalPadding + 40)
             }
             .coordinateSpace(name: scrollSpace)
@@ -79,6 +79,13 @@ struct DocumentRenderer: View {
         if let exact = document.outline.first(where: { $0.anchor == slug }) { return exact.id }
         let normalized = slug.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return document.outline.first { $0.anchor.trimmingCharacters(in: CharacterSet(charactersIn: "-")) == normalized }?.id
+    }
+
+    /// Only genuine parse errors surface in the reader. Style lints (tabs,
+    /// trailing whitespace, heading-level jumps) are warnings and would be noise
+    /// on ordinary documents — a viewer renders, it doesn't lint.
+    private var errorDiagnostics: [DiagnosticIR] {
+        document.diagnostics.filter { $0.severity == "error" }
     }
 
     // Tables and code blocks may exceed the reading measure; prose is capped.
@@ -125,19 +132,7 @@ struct DocumentRenderer: View {
             )
 
         case "paragraph":
-            if let image = soleImage(in: block.inlines) {
-                return AnyView(MarkdownImageView(inline: image, origin: document.origin))
-            }
-            return AnyView(
-                Text(InlineRenderer.attributedString(
-                    block.inlines,
-                    origin: document.origin,
-                    highlight: searchQuery,
-                    highlightIsActive: block.id == currentMatchID
-                ))
-                .lineSpacing(4.5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            )
+            return AnyView(paragraphView(block))
 
         case "blockquote":
             return AnyView(
@@ -224,13 +219,63 @@ struct DocumentRenderer: View {
         }
     }
 
-    private func soleImage(in inlines: [InlineIR]) -> InlineIR? {
-        let meaningful = inlines.filter { inline in
-            if inline.kind == "text" { return !(inline.text ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
-            return true
+    /// Renders a paragraph, promoting any images to their own image views so a
+    /// picture shows whether it stands alone, sits amid text, or is wrapped in a
+    /// link (e.g. `[![badge](img)](url)`).
+    @ViewBuilder
+    private func paragraphView(_ block: BlockIR) -> some View {
+        let images = collectImages(block.inlines)
+        if images.isEmpty {
+            paragraphText(block.inlines, blockID: block.id)
+        } else {
+            let textInlines = removingImages(block.inlines)
+            let hasText = !textInlines.map(\.plainText).joined().trimmingCharacters(in: .whitespaces).isEmpty
+            VStack(alignment: .leading, spacing: 10) {
+                if hasText {
+                    paragraphText(textInlines, blockID: block.id)
+                }
+                ForEach(Array(images.enumerated()), id: \.offset) { _, image in
+                    MarkdownImageView(inline: image, origin: document.origin)
+                }
+            }
         }
-        guard meaningful.count == 1, let first = meaningful.first, first.kind == "image" else { return nil }
-        return first
+    }
+
+    private func paragraphText(_ inlines: [InlineIR], blockID: String) -> some View {
+        Text(InlineRenderer.attributedString(
+            inlines,
+            origin: document.origin,
+            highlight: searchQuery,
+            highlightIsActive: blockID == currentMatchID
+        ))
+        .lineSpacing(4.5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Depth-first collection of image inlines, descending through links and
+    /// emphasis so nested/linked images are found.
+    private func collectImages(_ inlines: [InlineIR]) -> [InlineIR] {
+        inlines.flatMap { inline -> [InlineIR] in
+            inline.kind == "image" ? [inline] : collectImages(inline.children)
+        }
+    }
+
+    /// A copy of the inline tree with image nodes removed, so surrounding text
+    /// renders once (the images are shown separately as pictures).
+    private func removingImages(_ inlines: [InlineIR]) -> [InlineIR] {
+        inlines.compactMap { inline in
+            if inline.kind == "image" { return nil }
+            return InlineIR(
+                id: inline.id,
+                range: inline.range,
+                kind: inline.kind,
+                text: inline.text,
+                children: removingImages(inline.children),
+                url: inline.url,
+                title: inline.title,
+                alt: inline.alt
+            )
+        }
     }
 }
 

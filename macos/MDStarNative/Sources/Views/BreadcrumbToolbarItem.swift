@@ -25,9 +25,9 @@ struct BreadcrumbToolbarItem: View {
                 Text("No document open").foregroundStyle(.secondary)
             }
         }
+        .padding(.horizontal, 16)
         .font(.subheadline)
-        .frame(maxWidth: 460)
-        .fixedSize()
+        .lineLimit(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Current document path")
     }

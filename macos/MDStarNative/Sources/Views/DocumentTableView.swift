@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// Tables stay inside the reading pane. Cells wrap rather than forcing the
+/// entire document into horizontal scrolling; code blocks retain independent
+/// horizontal scrolling where preserving source layout is useful.
 struct DocumentTableView: View {
     let headers: [[InlineIR]]
     let rows: [[[InlineIR]]]
@@ -11,30 +14,16 @@ struct DocumentTableView: View {
 
     var body: some View {
         if columnCount > 0 {
-            ScrollView(.horizontal, showsIndicators: false) {
-                Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
-                    if !headers.isEmpty {
-                        GridRow {
-                            ForEach(0..<columnCount, id: \.self) { column in
-                                cell(cellInlines(headers, column), header: true, zebra: false)
-                            }
-                        }
-                        Divider().gridCellUnsizedAxes(.horizontal)
-                    }
-                    ForEach(rows.indices, id: \.self) { rowIndex in
-                        GridRow {
-                            ForEach(0..<columnCount, id: \.self) { column in
-                                cell(cellInlines(rows[rowIndex], column), header: false, zebra: rowIndex.isMultiple(of: 2))
-                            }
-                        }
-                        if rowIndex < rows.count - 1 {
-                            Divider().gridCellUnsizedAxes(.horizontal)
-                        }
-                    }
+            VStack(spacing: 0) {
+                if !headers.isEmpty {
+                    tableRow(headers, header: true, zebra: false)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.cornerRadius).stroke(Color.readerHairline))
+                ForEach(rows.indices, id: \.self) { rowIndex in
+                    tableRow(rows[rowIndex], header: false, zebra: rowIndex.isMultiple(of: 2))
+                }
             }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cornerRadius).stroke(Color.readerHairline))
             .padding(.vertical, 2)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Table with \(rows.count) rows and \(columnCount) columns")
@@ -45,6 +34,20 @@ struct DocumentTableView: View {
         source.indices.contains(column) ? source[column] : []
     }
 
+    /// An eager stack is intentional here. The reader itself is a LazyVStack;
+    /// nesting LazyVGrid inside it can leave table body cells unmaterialized.
+    /// Each cell gets an equal flexible share of the available table width and
+    /// its text wraps before the document needs to scroll horizontally.
+    private func tableRow(_ source: [[InlineIR]], header: Bool, zebra: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(0..<columnCount, id: \.self) { column in
+                cell(cellInlines(source, column), header: header, zebra: zebra)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func cell(_ inlines: [InlineIR], header: Bool, zebra: Bool) -> some View {
         Text(InlineRenderer.attributedString(
             inlines,
@@ -53,7 +56,7 @@ struct DocumentTableView: View {
         ))
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
-        .frame(minWidth: 80, maxWidth: 340, minHeight: 20, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
         .padding(.horizontal, 13)
         .padding(.vertical, 9)
         .background(header ? Color.readerStrongFill : (zebra ? Color.readerSubtleFill : Color.clear))
