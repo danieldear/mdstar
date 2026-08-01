@@ -9,9 +9,10 @@ on:
 permissions:
   contents: write
 
-# macOS ships the native SwiftUI reader (MD Star.app, with the `md` CLI embedded
-# in the bundle). Every platform ships the standalone `md` binary, which is both
-# the terminal viewer and the TUI editor.
+# macOS-only for now. The release ships the native SwiftUI reader as a universal
+# DMG with the `md` CLI embedded in the bundle, plus a standalone `md` archive.
+# Linux and Windows builds are deferred; the `md` binary still links Tauri, so
+# those targets need the GTK/WebKit toolchain and have not been validated here.
 #
 # Signing is optional: set the MACOS_* / NOTARY_* secrets to produce a
 # Gatekeeper-ready build. Without them the DMG is ad-hoc signed and users must
@@ -21,7 +22,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── macOS — native app (universal) + md CLI ──────────────────────────────
   macos:
     name: macOS (universal)
     runs-on: macos-14
@@ -63,7 +63,7 @@ jobs:
             --team-id "$NOTARY_TEAM_ID" \
             --password "$NOTARY_PASSWORD"
 
-      - name: Build native app + DMG
+      - name: Build native app + DMG installer
         env:
           CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           NOTARY_PROFILE: ${{ secrets.NOTARY_APPLE_ID != '' && 'mdstar' || '' }}
@@ -81,85 +81,6 @@ jobs:
           draft: true
           files: |
             dist/*.dmg
+            dist/*.dmg.sha256
             md-*.tar.gz
             md-*.tar.gz.sha256
-
-  # ── Linux — md CLI ───────────────────────────────────────────────────────
-  linux:
-    name: Linux (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-          - arch: aarch64
-            runner: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-
-      # The `md` binary links Tauri, so the GUI toolchain is required to compile
-      # it even though this job ships only the terminal binary.
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf
-
-      - name: Build md
-        run: cargo build --release -p mdstar-app --bin md --target ${{ matrix.target }}
-
-      - name: Package CLI binary
-        run: |
-          BIN=target/${{ matrix.target }}/release/md
-          ARCHIVE=md-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
-          tar -czf "$ARCHIVE" -C "$(dirname $BIN)" md
-          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          files: |
-            md-*.tar.gz
-            md-*.tar.gz.sha256
-
-  # ── Windows — md CLI ─────────────────────────────────────────────────────
-  windows:
-    name: Windows (x86_64)
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build md
-        run: cargo build --release -p mdstar-app --bin md
-
-      - name: Package CLI binary
-        shell: pwsh
-        run: |
-          $archive = "md-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip"
-          Compress-Archive -Path "target\release\md.exe" -DestinationPath $archive
-          (Get-FileHash $archive -Algorithm SHA256).Hash | Out-File "$archive.sha256"
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          files: |
-            md-*.zip
-            md-*.zip.sha256

@@ -1,15 +1,16 @@
 # Release Checklist
 
-What ships in a release:
+Releases are macOS-only for now:
 
-| Platform | Artifacts |
+| Artifact | Contents |
 | --- | --- |
-| macOS | `MD-Star-<version>-universal.dmg` (native SwiftUI reader, `md` CLI embedded in the bundle) and a standalone `md` archive |
-| Linux | `md` archive (x86_64, aarch64) |
-| Windows | `md` archive (x86_64) |
+| `MD-Star-<version>-universal.dmg` | Native SwiftUI reader with the `md` CLI embedded in the bundle |
+| `md-<tag>-universal-apple-darwin.tar.gz` | Standalone `md` CLI |
 
-The Tauri desktop app is no longer part of the release. macOS ships the native
-reader in `macos/MDStarNative`; other platforms ship the terminal binary.
+The Tauri desktop app is no longer part of the release; macOS ships the native
+reader in `macos/MDStarNative`. Linux and Windows builds are deferred — `md`
+still links Tauri, so those targets need the GTK/WebKit toolchain and have not
+been validated in CI.
 
 ## Repository
 
@@ -80,9 +81,12 @@ they are absent:
 
 ## Known Limitations
 
-- The `md` binary still links Tauri, so `md --app` opens the legacy WebView GUI
-  and Linux builds need the GTK/WebKit toolchain to compile. Removing that
-  dependency is tracked as follow-up work.
+- The `md` binary still links Tauri, so `md --app` opens the legacy WebView GUI,
+  and building it on Linux needs the GTK/WebKit toolchain. Removing that
+  dependency is the prerequisite for restoring Linux and Windows releases.
+- DMG window styling needs Automation access to Finder. Without it the installer
+  is still valid, just unstyled; grant access in System Settings > Privacy &
+  Security > Automation and rebuild for the laid-out window.
 - Terminal output renders images as `![alt](url)` markup; no sixel/kitty image
   protocol support.
 - Highlights and comments are not implemented; they need a TextKit-based reader.
