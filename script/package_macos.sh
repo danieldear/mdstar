@@ -239,30 +239,17 @@ else
 fi
 
 # ── DMG ─────────────────────────────────────────────────────────────────────
+# make_dmg.sh owns layout, compression, signing and notarization so the
+# installer can also be rebuilt on its own from an existing bundle.
 if $BUILD_DMG; then
-  section "Building DMG"
-  DMG_PATH="$DIST_DIR/MD-Star-$VERSION-$ARCH_MODE.dmg"
-  DMG_STAGE="$STAGING/dmg"
-  rm -f "$DMG_PATH"
-  mkdir -p "$DMG_STAGE"
-  cp -R "$APP_BUNDLE" "$DMG_STAGE/"
-  ln -s /Applications "$DMG_STAGE/Applications"
-  hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_PATH" >/dev/null
-  ok "DMG: $DMG_PATH"
-
-  if [[ -n "$SIGN_IDENTITY" ]]; then
-    codesign --force --sign "$SIGN_IDENTITY" "$DMG_PATH"
-    if [[ -n "${NOTARY_PROFILE:-}" ]]; then
-      section "Notarizing"
-      info "Submitting to Apple (this can take a few minutes)…"
-      xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
-      xcrun stapler staple "$DMG_PATH"
-      ok "Notarized and stapled — installs without Gatekeeper warnings"
-    else
-      warn "NOTARY_PROFILE not set — DMG is signed but not notarized."
-      warn "Gatekeeper still warns on first open until the app is notarized."
-    fi
+  if [[ ! -f "$ROOT_DIR/assets/dmg/background.png" ]]; then
+    "$ROOT_DIR/script/make_dmg_background.sh" || warn "Could not generate DMG background"
   fi
+  CODESIGN_IDENTITY="$SIGN_IDENTITY" NOTARY_PROFILE="${NOTARY_PROFILE:-}" \
+    "$ROOT_DIR/script/make_dmg.sh" \
+      --app "$APP_BUNDLE" \
+      --volname "$APP_NAME" \
+      --output "$DIST_DIR/MD-Star-$VERSION-$ARCH_MODE.dmg"
 fi
 
 # ── Install ─────────────────────────────────────────────────────────────────
