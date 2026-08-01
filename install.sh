@@ -1,12 +1,14 @@
 #!/usr/bin/env sh
 # MD Star CLI installer
 # Usage:
-#   REPO=owner/mdstar curl -fsSL https://raw.githubusercontent.com/owner/mdstar/main/install.sh | sh
-#   ./install.sh --link-app
+#   curl -fsSL https://raw.githubusercontent.com/danieldear/mdstar/main/install.sh | sh
+#   ./install.sh --link-app          # link the CLI out of an installed MD Star.app
+#
+# Override the source repository with REPO=owner/name when testing a fork.
 
 set -e
 
-REPO="${REPO:-}"
+REPO="${REPO:-danieldear/mdstar}"
 BIN_NAME="md"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 APP_PATH="${APP_PATH:-}"

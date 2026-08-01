@@ -228,9 +228,10 @@ fn scan_workspace(path: &Path, depth: usize) -> Result<WorkspaceNode, std::io::E
             .filter_map(|entry| {
                 let entry_path = entry.path();
                 let entry_metadata = fs::symlink_metadata(&entry_path).ok()?;
-                if entry_metadata.is_dir() && !entry_metadata.file_type().is_symlink() {
-                    scan_workspace(&entry_path, depth + 1).ok()
-                } else if entry_metadata.is_file() && is_supported_file(&entry_path) {
+                let is_scannable_dir =
+                    entry_metadata.is_dir() && !entry_metadata.file_type().is_symlink();
+                let is_supported_doc = entry_metadata.is_file() && is_supported_file(&entry_path);
+                if is_scannable_dir || is_supported_doc {
                     scan_workspace(&entry_path, depth + 1).ok()
                 } else {
                     None

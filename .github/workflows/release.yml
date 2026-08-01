@@ -4,16 +4,24 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
-# One job per platform.  Each job builds the single `md` binary, which works
-# as both a CLI tool and (on macOS) as a native GUI app when bundled into a
-# .app / .dmg.
+# macOS ships the native SwiftUI reader (MD Star.app, with the `md` CLI embedded
+# in the bundle). Every platform ships the standalone `md` binary, which is both
+# the terminal viewer and the TUI editor.
+#
+# Signing is optional: set the MACOS_* / NOTARY_* secrets to produce a
+# Gatekeeper-ready build. Without them the DMG is ad-hoc signed and users must
+# right-click > Open on first launch.
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  # ── macOS — universal binary + .dmg bundle ──────────────────────────────
+  # ── macOS — native app (universal) + md CLI ──────────────────────────────
   macos:
     name: macOS (universal)
     runs-on: macos-14
@@ -26,45 +34,70 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version '^2' --locked
+      - name: Import signing certificate
+        if: env.MACOS_CERTIFICATE != ''
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
 
-      # Build universal binary (.app + .dmg)
-      - name: Build universal macOS app
-        working-directory: crates/markdown-app
-        run: cargo tauri build --target universal-apple-darwin
+      - name: Store notarization credentials
+        if: env.NOTARY_APPLE_ID != ''
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials mdstar \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD"
 
-      # Also extract the raw `md` CLI binary from the bundle for users who
-      # just want the terminal tool without installing the .app.
+      - name: Build native app + DMG
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_PROFILE: ${{ secrets.NOTARY_APPLE_ID != '' && 'mdstar' || '' }}
+        run: ./script/package_macos.sh --arch universal --dmg
+
       - name: Package CLI binary
         run: |
-          BIN=target/universal-apple-darwin/release/md
-          ARCHIVE=md-${{ github.ref_name }}-universal-apple-darwin.tar.gz
-          tar -czf "$ARCHIVE" -C "$(dirname $BIN)" "$(basename $BIN)"
+          BIN="dist/MD Star.app/Contents/MacOS/md"
+          ARCHIVE="md-${{ github.ref_name }}-universal-apple-darwin.tar.gz"
+          tar -czf "$ARCHIVE" -C "$(dirname "$BIN")" md
           shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
-          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
-            target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            ${{ env.ARCHIVE }}
-            ${{ env.ARCHIVE }}.sha256
+            dist/*.dmg
+            md-*.tar.gz
+            md-*.tar.gz.sha256
 
-  # ── Linux ────────────────────────────────────────────────────────────────
+  # ── Linux — md CLI ───────────────────────────────────────────────────────
   linux:
     name: Linux (${{ matrix.arch }})
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: x86_64
+            runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            cross_pkg: ""
           - arch: aarch64
+            runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
-            cross_pkg: gcc-aarch64-linux-gnu
 
     steps:
       - uses: actions/checkout@v4
@@ -73,46 +106,37 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install system deps (GUI)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf ${{ matrix.cross_pkg }}
-
-      - name: Set cross-linker (aarch64)
-        if: matrix.arch == 'aarch64'
-        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version '^2' --locked
+      # The `md` binary links Tauri, so the GUI toolchain is required to compile
+      # it even though this job ships only the terminal binary.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
 
-      - name: Build Linux app + CLI
-        working-directory: crates/markdown-app
-        run: cargo tauri build --target ${{ matrix.target }}
+      - name: Build md
+        run: cargo build --release -p mdstar-app --bin md --target ${{ matrix.target }}
 
       - name: Package CLI binary
         run: |
           BIN=target/${{ matrix.target }}/release/md
           ARCHIVE=md-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
-          tar -czf "$ARCHIVE" -C "$(dirname $BIN)" "$(basename $BIN)"
+          tar -czf "$ARCHIVE" -C "$(dirname $BIN)" md
           shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
-          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
-            target/${{ matrix.target }}/release/bundle/deb/*.deb
-            target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
-            ${{ env.ARCHIVE }}
-            ${{ env.ARCHIVE }}.sha256
+            md-*.tar.gz
+            md-*.tar.gz.sha256
 
-  # ── Windows ──────────────────────────────────────────────────────────────
+  # ── Windows — md CLI ─────────────────────────────────────────────────────
   windows:
     name: Windows (x86_64)
     runs-on: windows-2022
@@ -123,27 +147,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version '^2' --locked
-
-      - name: Build Windows app + CLI
-        working-directory: crates/markdown-app
-        run: cargo tauri build
+      - name: Build md
+        run: cargo build --release -p mdstar-app --bin md
 
       - name: Package CLI binary
         shell: pwsh
         run: |
-          $bin = "target\release\md.exe"
           $archive = "md-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip"
-          Compress-Archive -Path $bin -DestinationPath $archive
-          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash
-          $hash | Out-File "$archive.sha256"
-          echo "ARCHIVE=$archive" | Out-File -Append $env:GITHUB_ENV
+          Compress-Archive -Path "target\release\md.exe" -DestinationPath $archive
+          (Get-FileHash $archive -Algorithm SHA256).Hash | Out-File "$archive.sha256"
 
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
-            target/release/bundle/msi/*.msi
-            ${{ env.ARCHIVE }}
-            ${{ env.ARCHIVE }}.sha256
+            md-*.zip
+            md-*.zip.sha256
