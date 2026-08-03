@@ -2,6 +2,8 @@ use markdown::mdast::Node;
 use markdown::{Constructs, ParseOptions};
 use thiserror::Error;
 
+pub mod document_ir;
+
 // ─── Inline nodes ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]

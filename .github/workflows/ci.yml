@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   rust:
     name: Rust Checks
@@ -21,6 +24,15 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
+      # mdstar-app links Tauri, so the GUI toolchain is needed to check the
+      # workspace even though these checks build no bundles.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
       - name: Format check
         run: cargo fmt --all -- --check
 
@@ -30,3 +42,39 @@ jobs:
       - name: Tests
         run: cargo test --workspace --all-features
 
+  native-macos:
+    name: Native macOS App
+    # Package.swift requires Swift tools 6.0, and the Liquid Glass path needs
+    # the macOS 26 SDK; older images ship Swift 5.10 and cannot build either.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          swift --version
+          xcodebuild -version
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # The Swift package links libmdstar_ffi, so the dylib must exist first.
+      - name: Build FFI dylib
+        run: cargo build -p mdstar-ffi
+
+      - name: Build native app
+        working-directory: macos/MDStarNative
+        run: swift build
+
+      - name: Test native app
+        working-directory: macos/MDStarNative
+        run: swift test
+
+      - name: Verify release packaging
+        run: ./script/package_macos.sh --arch arm64

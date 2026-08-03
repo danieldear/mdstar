@@ -10,42 +10,9 @@ use tauri::{Emitter, Manager, State, WebviewWindow};
 
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mdtxt"];
 const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "md",
-    "markdown",
-    "mdown",
-    "mkd",
-    "mdtxt",
-    "txt",
-    "text",
-    "json",
-    "xml",
-    "yaml",
-    "yml",
-    "toml",
-    "csv",
-    "rs",
-    "kt",
-    "kts",
-    "py",
-    "js",
-    "jsx",
-    "ts",
-    "tsx",
-    "java",
-    "go",
-    "c",
-    "h",
-    "cpp",
-    "hpp",
-    "cs",
-    "swift",
-    "sh",
-    "bash",
-    "zsh",
-    "ini",
-    "conf",
-    "sql",
-    "log",
+    "md", "markdown", "mdown", "mkd", "mdtxt", "txt", "text", "json", "xml", "yaml", "yml", "toml",
+    "csv", "rs", "kt", "kts", "py", "js", "jsx", "ts", "tsx", "java", "go", "c", "h", "cpp", "hpp",
+    "cs", "swift", "sh", "bash", "zsh", "ini", "conf", "sql", "log",
 ];
 
 // ─── Data types sent to the frontend ─────────────────────────────────────────
@@ -253,11 +220,11 @@ pub fn run() {
             initial_open_paths,
             watch_file
         ])
-        .setup(|app| {
-            let window = app.get_webview_window("main").unwrap();
-
+        .setup(|_app| {
+            // Vibrancy is a macOS-only affordance; other platforms keep the
+            // default Tauri chrome, so the handle is unused there.
             #[cfg(target_os = "macos")]
-            apply_macos_window_style(&window);
+            apply_macos_window_style(&_app.get_webview_window("main").unwrap());
 
             Ok(())
         })
