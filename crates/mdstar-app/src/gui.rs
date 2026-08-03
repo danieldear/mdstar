@@ -220,11 +220,11 @@ pub fn run() {
             initial_open_paths,
             watch_file
         ])
-        .setup(|app| {
-            let window = app.get_webview_window("main").unwrap();
-
+        .setup(|_app| {
+            // Vibrancy is a macOS-only affordance; other platforms keep the
+            // default Tauri chrome, so the handle is unused there.
             #[cfg(target_os = "macos")]
-            apply_macos_window_style(&window);
+            apply_macos_window_style(&_app.get_webview_window("main").unwrap());
 
             Ok(())
         })

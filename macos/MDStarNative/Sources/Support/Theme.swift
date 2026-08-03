@@ -51,15 +51,28 @@ extension Color {
 extension View {
     /// Uses the system Liquid Glass material when it is available, with a
     /// compact material fallback for earlier supported macOS versions.
+    ///
+    /// `glassEffect` needs the macOS 26 SDK, so the call is also gated on the
+    /// compiler version — older toolchains (and CI images that ship them) build
+    /// the fallback instead of failing to compile.
     @ViewBuilder
     func floatingGlass<S: Shape>(_ shape: S) -> some View {
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             self.glassEffect(.regular, in: shape)
         } else {
-            self
-                .background(.regularMaterial, in: shape)
-                .overlay(shape.stroke(Color.readerHairline))
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+            materialFallback(shape)
         }
+        #else
+        materialFallback(shape)
+        #endif
+    }
+
+    @ViewBuilder
+    private func materialFallback<S: Shape>(_ shape: S) -> some View {
+        self
+            .background(.regularMaterial, in: shape)
+            .overlay(shape.stroke(Color.readerHairline))
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
     }
 }
