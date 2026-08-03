@@ -135,7 +135,7 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Frameworks" "$CONTENTS/Resources"
 
 cp "$BUILT_APP_BINARY" "$CONTENTS/MacOS/$EXECUTABLE_NAME"
 cp "$STAGING/libmdstar_ffi.dylib" "$CONTENTS/Frameworks/"
-$EMBED_CLI && cp "$STAGING/md" "$CONTENTS/MacOS/md"
+if $EMBED_CLI; then cp "$STAGING/md" "$CONTENTS/MacOS/md"; fi
 
 if [[ -f "$ICON_SOURCE" ]]; then
   cp "$ICON_SOURCE" "$CONTENTS/Resources/AppIcon.icns"
@@ -150,7 +150,7 @@ for target in "${RUST_TARGETS[@]}"; do
     "@rpath/libmdstar_ffi.dylib" "$CONTENTS/MacOS/$EXECUTABLE_NAME" 2>/dev/null || true
 done
 chmod +x "$CONTENTS/MacOS/$EXECUTABLE_NAME"
-$EMBED_CLI && chmod +x "$CONTENTS/MacOS/md"
+if $EMBED_CLI; then chmod +x "$CONTENTS/MacOS/md"; fi
 
 cat >"$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -225,13 +225,17 @@ if [[ -n "$SIGN_IDENTITY" ]]; then
   info "Developer ID: $SIGN_IDENTITY"
   codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" \
     "$CONTENTS/Frameworks/libmdstar_ffi.dylib"
-  $EMBED_CLI && codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$CONTENTS/MacOS/md"
+  if $EMBED_CLI; then
+    codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$CONTENTS/MacOS/md"
+  fi
   codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
   codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
   ok "Signed with Developer ID (Gatekeeper-ready)"
 else
   codesign --force --sign - --timestamp=none "$CONTENTS/Frameworks/libmdstar_ffi.dylib"
-  $EMBED_CLI && codesign --force --sign - --timestamp=none "$CONTENTS/MacOS/md"
+  if $EMBED_CLI; then
+    codesign --force --sign - --timestamp=none "$CONTENTS/MacOS/md"
+  fi
   codesign --force --sign - --timestamp=none "$APP_BUNDLE"
   warn "Ad-hoc signed (no CODESIGN_IDENTITY set)."
   warn "Runs locally, but downloaded copies are blocked by Gatekeeper until"
@@ -278,5 +282,12 @@ fi
 
 section "Done"
 ok "App bundle: $APP_BUNDLE"
-$EMBED_CLI && ok "Embedded CLI: $CONTENTS/MacOS/md (link with ./install.sh --link-app)"
-$BUILD_DMG && ok "DMG ready for distribution"
+if $EMBED_CLI; then
+  ok "Embedded CLI: $CONTENTS/MacOS/md (link with ./install.sh --link-app)"
+fi
+if $BUILD_DMG; then
+  ok "DMG ready for distribution"
+fi
+
+# A trailing `false && ...` guard would otherwise become the script's exit code.
+exit 0
