@@ -41,10 +41,24 @@ lipo -archs "dist/MD Star.app/Contents/MacOS/MDStarNative"   # expect: x86_64 ar
 
 ## Code Signing and Notarization
 
-Unsigned builds run locally but Gatekeeper blocks downloaded copies until the
-user right-clicks the app and chooses **Open**. To ship a Gatekeeper-clean build
-you need an Apple Developer Program membership and a *Developer ID Application*
-certificate.
+An unsigned build runs on the machine that produced it, but any copy that is
+downloaded or transferred to another Mac carries a quarantine flag and **will
+not launch**. This is not a warning the user can click through:
+
+- **macOS 15 removed the Control-click > Open bypass.** Advice to "right-click
+  and choose Open" no longer works. The recipient must open **System Settings >
+  Privacy & Security**, find the blocked app near the bottom, and choose **Open
+  Anyway**, or run:
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/MD Star.app"
+  ```
+- Verify what Gatekeeper actually thinks with `spctl -a -t open \
+  --context context:primary-signature -v <file>.dmg`. An unsigned artifact
+  reports `rejected — source=no usable signature`.
+
+Treat publishing an unsigned build as shipping a broken first-run experience.
+To avoid it you need an Apple Developer Program membership and a
+*Developer ID Application* certificate.
 
 Locally:
 
@@ -67,6 +81,11 @@ they are absent:
 | `NOTARY_PASSWORD` | app-specific password |
 
 ## macOS Verification
+
+Verify on a **second Mac**, not the build machine. Locally built apps are never
+quarantined, so the build machine cannot reproduce the experience a downloaded
+copy gives — an unsigned release passes every local check and still fails for
+everyone who downloads it.
 
 - Install the DMG by dragging **MD Star** to Applications.
 - Only one `MD Star.app` should exist. An older Tauri build installed at the same

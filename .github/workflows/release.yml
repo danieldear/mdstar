@@ -15,8 +15,10 @@ permissions:
 # those targets need the GTK/WebKit toolchain and have not been validated here.
 #
 # Signing is optional: set the MACOS_* / NOTARY_* secrets to produce a
-# Gatekeeper-ready build. Without them the DMG is ad-hoc signed and users must
-# right-click > Open on first launch.
+# Gatekeeper-ready build. Without them the DMG is ad-hoc signed, so downloaded
+# copies are quarantined and refuse to launch until the user approves the app in
+# System Settings > Privacy & Security. Publishing an unsigned build gives every
+# recipient that failure on first run.
 
 env:
   CARGO_TERM_COLOR: always

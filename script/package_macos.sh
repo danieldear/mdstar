@@ -17,8 +17,12 @@
 #   --no-cli                         Skip embedding the `md` CLI binary
 #   --help                           Show this message
 #
-# Signing (optional — unsigned builds work locally but Gatekeeper blocks
-# downloaded copies until the user right-clicks > Open):
+# Signing (optional). Unsigned builds run on the machine that made them, but a
+# copy that is downloaded or transferred is quarantined and refuses to launch.
+# macOS 15 removed the Control-click > Open bypass, so recipients must approve
+# the app in System Settings > Privacy & Security, or clear the quarantine flag
+# with `xattr -dr com.apple.quarantine "/Applications/MD Star.app"`. Signing and
+# notarizing removes the prompt entirely:
 #   CODESIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
 #   NOTARY_PROFILE="mdstar"     # notarytool keychain profile; enables notarization
 #
@@ -238,8 +242,11 @@ else
   fi
   codesign --force --sign - --timestamp=none "$APP_BUNDLE"
   warn "Ad-hoc signed (no CODESIGN_IDENTITY set)."
-  warn "Runs locally, but downloaded copies are blocked by Gatekeeper until"
-  warn "the user right-clicks the app and chooses Open."
+  warn "This build runs here, but a copy that is downloaded or transferred is"
+  warn "quarantined and will not launch. macOS 15 removed the Control-click"
+  warn "bypass; recipients must approve it in System Settings > Privacy &"
+  warn "Security, or run:"
+  warn "  xattr -dr com.apple.quarantine \"/Applications/MD Star.app\""
 fi
 
 # ── DMG ─────────────────────────────────────────────────────────────────────

@@ -236,7 +236,10 @@ if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
   fi
 else
   warn "CODESIGN_IDENTITY not set — unsigned DMG."
-  warn "Recipients must right-click the app and choose Open on first launch."
+  warn "Downloaded copies are quarantined and will not launch. macOS 15 removed"
+  warn "the Control-click bypass; recipients must approve the app in System"
+  warn "Settings > Privacy & Security, or run:"
+  warn "  xattr -dr com.apple.quarantine \"/Applications/MD Star.app\""
 fi
 
 # ── Verify ──────────────────────────────────────────────────────────────────
