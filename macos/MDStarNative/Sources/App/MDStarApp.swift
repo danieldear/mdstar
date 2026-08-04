@@ -7,6 +7,7 @@ struct MDStarApp: App {
     @StateObject private var navigation = NavigationStore()
     @StateObject private var inspector = InspectorStore()
     @StateObject private var settings = ReaderSettings()
+    @StateObject private var annotations = AnnotationStore()
 
     var body: some Scene {
         WindowGroup("MD Star") {
@@ -14,7 +15,8 @@ struct MDStarApp: App {
                 workspace: workspace,
                 navigation: navigation,
                 inspector: inspector,
-                settings: settings
+                settings: settings,
+                annotations: annotations
             )
             .frame(minWidth: 880, minHeight: 620)
             .onOpenURL { url in workspace.openFile(url, recordHistory: true) }
@@ -47,6 +49,19 @@ struct MDStarApp: App {
                 Button("Find in Document…") { if workspace.document != nil { workspace.presentFind() } }
                     .keyboardShortcut("f", modifiers: .command)
                     .disabled(workspace.document == nil)
+                Divider()
+                // Posted rather than called directly: the selection lives in the
+                // reader, and the window observes these to act on it.
+                Button("Highlight Selection") {
+                    NotificationCenter.default.post(name: .mdstarAddHighlight, object: nil)
+                }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .disabled(workspace.document == nil)
+                Button("Add Comment…") {
+                    NotificationCenter.default.post(name: .mdstarAddComment, object: nil)
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+                .disabled(workspace.document == nil)
             }
             CommandMenu("View") {
                 Picker("Reading Mode", selection: $workspace.viewMode) {

@@ -9,6 +9,7 @@ struct WorkspaceWindow: View {
     @ObservedObject var navigation: NavigationStore
     @ObservedObject var inspector: InspectorStore
     @ObservedObject var settings: ReaderSettings
+    @ObservedObject var annotations: AnnotationStore
 
     @State private var selection: SelectedText?
     @State private var pendingComment: SelectedText?
@@ -184,6 +185,61 @@ struct WorkspaceWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddHighlight)) { _ in
+            addHighlight()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddComment)) { _ in
+            beginComment()
+        }
+        .sheet(item: $pendingComment) { target in
+            CommentComposer(
+                snippet: target.text,
+                note: $commentDraft,
+                onCancel: {
+                    pendingComment = nil
+                    commentDraft = ""
+                },
+                onSave: {
+                    saveComment(for: target)
+                }
+            )
+        }
+    }
+
+    // MARK: - Annotations
+
+    var canAnnotate: Bool { selection != nil && workspace.document != nil }
+
+    func addHighlight() {
+        guard let selection, let document = workspace.document else { return }
+        annotations.add(
+            kind: .highlight,
+            range: selection.range,
+            snippet: selection.text,
+            blockID: selection.blockID,
+            documentID: document.documentID
+        )
+    }
+
+    func beginComment() {
+        guard let selection, workspace.document != nil else { return }
+        commentDraft = ""
+        pendingComment = selection
+    }
+
+    private func saveComment(for target: SelectedText) {
+        if let document = workspace.document {
+            annotations.add(
+                kind: .comment,
+                range: target.range,
+                snippet: target.text,
+                note: commentDraft,
+                blockID: target.blockID,
+                documentID: document.documentID
+            )
+        }
+        pendingComment = nil
+        commentDraft = ""
     }
 
     @ViewBuilder
@@ -207,6 +263,7 @@ struct WorkspaceWindow: View {
             TextKitReaderView(
                 document: document,
                 settings: settings,
+                annotations: annotations,
                 focusedBlockID: workspace.focusedBlockID,
                 searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
                 currentMatchID: workspace.currentMatchID,

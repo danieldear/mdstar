@@ -170,4 +170,50 @@ final class ReaderSettings: ObservableObject {
     var secondaryFont: Font {
         .system(size: fontSize - 1, design: fontFamily.design)
     }
+
+    // MARK: - AppKit fonts
+    //
+    // The TextKit reader composes an NSAttributedString, so it needs concrete
+    // NSFonts rather than SwiftUI's opaque Font values.
+
+    private var nsDesign: NSFontDescriptor.SystemDesign {
+        switch fontFamily {
+        case .system: .default
+        case .serif: .serif
+        case .rounded: .rounded
+        case .monospaced: .monospaced
+        }
+    }
+
+    private func nsFont(size: Double, weight: NSFont.Weight) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: weight)
+        guard let descriptor = base.fontDescriptor.withDesign(nsDesign),
+              let font = NSFont(descriptor: descriptor, size: size) else {
+            return base
+        }
+        return font
+    }
+
+    var nsBodyFont: NSFont { nsFont(size: fontSize, weight: .regular) }
+
+    var nsSecondaryFont: NSFont { nsFont(size: fontSize - 1, weight: .regular) }
+
+    func nsHeadingFont(level: Int) -> NSFont {
+        nsFont(size: headingPointSize(level: level), weight: level <= 1 ? .bold : .semibold)
+    }
+
+    /// Code always uses a monospaced face regardless of the reading typeface.
+    var nsCodeFont: NSFont {
+        NSFont.monospacedSystemFont(ofSize: fontSize - 1.5, weight: .regular)
+    }
+
+    /// Applies bold/italic traits on top of any of the fonts above.
+    func nsFont(_ font: NSFont, bold: Bool, italic: Bool) -> NSFont {
+        guard bold || italic else { return font }
+        var traits = font.fontDescriptor.symbolicTraits
+        if bold { traits.insert(.bold) }
+        if italic { traits.insert(.italic) }
+        let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
+        return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
+    }
 }

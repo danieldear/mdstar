@@ -25,29 +25,6 @@ struct ComposedDocument {
     func blockID(containing location: Int) -> String? {
         blocks.last { $0.range.location <= location }?.id
     }
-
-    /// Break a text selection into the portions belonging to each semantic
-    /// block. This gives annotations durable navigation anchors while keeping a
-    /// continuous native text selection for Copy.
-    func annotationSegments(for selection: NSRange) -> [AnnotationSegment] {
-        guard selection.length > 0 else { return [] }
-        return blocks.compactMap { block in
-            let intersection = NSIntersectionRange(selection, block.range)
-            guard intersection.length > 0 else { return nil }
-            return AnnotationSegment(
-                blockID: block.id,
-                location: intersection.location,
-                length: intersection.length
-            )
-        }
-    }
-
-    func range(for segment: AnnotationSegment) -> NSRange? {
-        guard range(for: segment.blockID) != nil,
-              segment.range.location != NSNotFound,
-              segment.range.upperBound <= text.length else { return nil }
-        return segment.range
-    }
 }
 
 /// Attribute key marking which block a run belongs to. Lets the view resolve a
@@ -166,11 +143,9 @@ struct AttributedDocumentBuilder {
         let start = block.start ?? 1
 
         for (offset, item) in block.items.enumerated() {
-            let marker: String?
-            if item.checked != nil {
-                // Task boxes are drawn with SF Symbols rather than box-drawing
-                // characters, which rendered as mismatched glyphs.
-                marker = nil
+            let marker: String
+            if let checked = item.checked {
+                marker = checked ? "\u{2713} " : "\u{25A2} "
             } else if ordered {
                 marker = "\(start + offset). "
             } else {
@@ -181,18 +156,15 @@ struct AttributedDocumentBuilder {
             paragraph.firstLineHeadIndent = indent
             paragraph.paragraphSpacing = 4
 
-            if let marker {
-                output.append(NSAttributedString(
-                    string: marker,
-                    attributes: [
-                        .font: settings.nsBodyFont,
-                        .foregroundColor: secondaryColor,
-                        .paragraphStyle: paragraph,
-                    ]
-                ))
-            } else if let checked = item.checked {
-                output.append(checkboxAttachment(checked: checked, paragraph: paragraph))
-            }
+            let markerText = NSAttributedString(
+                string: marker,
+                attributes: [
+                    .font: settings.nsBodyFont,
+                    .foregroundColor: item.checked == true ? NSColor.controlAccentColor : secondaryColor,
+                    .paragraphStyle: paragraph,
+                ]
+            )
+            output.append(markerText)
 
             // The first child paragraph continues the marker's line; anything
             // further (nested lists, extra paragraphs) starts below it.
@@ -211,45 +183,6 @@ struct AttributedDocumentBuilder {
         }
     }
 
-    /// A task checkbox drawn as an SF Symbol image so it matches the rest of
-    /// the system UI at any reading size.
-    private func checkboxAttachment(checked: Bool, paragraph: NSParagraphStyle) -> NSAttributedString {
-        let name = checked ? "checkmark.circle.fill" : "circle"
-        let size = settings.fontSize
-        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
-
-        let output = NSMutableAttributedString()
-        if let symbol = NSImage(systemSymbolName: name, accessibilityDescription: checked ? "Completed" : "Not completed")?
-            .withSymbolConfiguration(configuration) {
-            if checked {
-                symbol.isTemplate = true
-            }
-            let attachment = NSTextAttachment()
-            attachment.image = symbol
-            // Nudge down so the box sits on the text baseline.
-            attachment.bounds = CGRect(
-                x: 0,
-                y: -size * 0.14,
-                width: symbol.size.width,
-                height: symbol.size.height
-            )
-            let attachmentString = NSMutableAttributedString(attachment: attachment)
-            attachmentString.addAttributes(
-                [
-                    .paragraphStyle: paragraph,
-                    .foregroundColor: checked ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor,
-                ],
-                range: NSRange(location: 0, length: attachmentString.length)
-            )
-            output.append(attachmentString)
-        }
-        output.append(NSAttributedString(
-            string: "  ",
-            attributes: [.font: settings.nsBodyFont, .paragraphStyle: paragraph]
-        ))
-        return output
-    }
-
     private func appendCode(_ code: String, language: String?, to output: NSMutableAttributedString, indent: CGFloat) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.paragraphSpacingBefore = 8
@@ -262,10 +195,14 @@ struct AttributedDocumentBuilder {
             attributedString: SyntaxHighlighter.highlightForAppKit(code, language: language, font: settings.nsCodeFont)
         )
         let full = NSRange(location: 0, length: highlighted.length)
-        // No run background here: a flat fill behind the glyphs looked like a
-        // highlight rather than a code card. ReaderTextView draws a rounded
-        // card behind the whole block instead.
-        highlighted.addAttribute(.paragraphStyle, value: paragraph, range: full)
+        highlighted.addAttributes(
+            [
+                .paragraphStyle: paragraph,
+                .backgroundColor: NSColor.textBackgroundColor.blended(withFraction: 0.06, of: .labelColor)
+                    ?? NSColor.textBackgroundColor,
+            ],
+            range: full
+        )
         output.append(highlighted)
         output.append(newline(paragraph))
     }

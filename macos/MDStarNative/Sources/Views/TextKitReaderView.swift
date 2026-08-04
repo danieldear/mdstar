@@ -24,10 +24,11 @@ struct TextKitReaderView: NSViewRepresentable {
         let textView = ReaderTextView()
         textView.isEditable = false
         textView.isSelectable = true
-        textView.drawsBackground = false
+        textView.drawsBackground = true
+        textView.backgroundColor = .textBackgroundColor
         textView.isRichText = true
         textView.usesFindBar = false
-        textView.textContainerInset = NSSize(width: 0, height: 20)
+        textView.textContainerInset = NSSize(width: 0, height: 28)
         textView.linkTextAttributes = [
             .foregroundColor: NSColor.linkColor,
             .cursor: NSCursor.pointingHand,
@@ -40,11 +41,8 @@ struct TextKitReaderView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-        // This reader deliberately leaves titlebar geometry to the confirmed
-        // v0.1 SwiftUI window shell. It is only the document surface.
-        scrollView.automaticallyAdjustsContentInsets = true
-        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 24, right: 0)
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
         scrollView.documentView = textView
 
         context.coordinator.textView = textView
@@ -73,7 +71,6 @@ struct TextKitReaderView: NSViewRepresentable {
         let signature = DocumentSignature(
             documentID: document.documentID,
             origin: document.origin,
-            contentFingerprint: document.blocks.map { "\($0.id):\($0.searchableText)" }.joined(separator: "\u{1F}"),
             fontSize: settings.fontSize,
             family: settings.fontFamily,
             lineSpacing: settings.lineSpacing,
@@ -107,7 +104,6 @@ struct TextKitReaderView: NSViewRepresentable {
     struct DocumentSignature: Equatable {
         let documentID: String
         let origin: String
-        let contentFingerprint: String
         let fontSize: Double
         let family: ReaderFontFamily
         let lineSpacing: Double
@@ -203,14 +199,12 @@ struct TextKitReaderView: NSViewRepresentable {
             layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: full)
 
             for annotation in annotations {
-                let ranges = annotation.segments?.compactMap(composed.range(for:))
-                    ?? [annotation.resolvedRange(in: composed.string)]
-                for range in ranges where range.location != NSNotFound && range.upperBound <= composed.text.length {
+                let range = annotation.resolvedRange(in: composed.string)
+                guard range.location != NSNotFound, range.upperBound <= composed.text.length else { continue }
                 layoutManager.addTemporaryAttributes(
                     [.backgroundColor: annotation.kind.highlightColor],
                     forCharacterRange: range
                 )
-                }
             }
 
             let needle = query.trimmingCharacters(in: .whitespaces)
@@ -268,26 +262,21 @@ struct TextKitReaderView: NSViewRepresentable {
             let text = (composed.string as NSString).substring(with: range)
             parent.onSelectionChange(
                 SelectedText(
-                    documentID: parent.document.documentID,
                     range: range,
                     text: text,
-                    blockID: composed.blockID(containing: range.location),
-                    segments: composed.annotationSegments(for: range)
+                    blockID: composed.blockID(containing: range.location)
                 )
             )
         }
     }
 }
 
-
 /// A text selection reported back to SwiftUI.
 struct SelectedText: Equatable, Identifiable {
-    var id: String { "\(documentID)-\(range.location)-\(range.length)" }
-    let documentID: String
+    var id: String { "\(range.location)-\(range.length)" }
     let range: NSRange
     let text: String
     let blockID: String?
-    let segments: [AnnotationSegment]
 }
 
 /// Text view that centres its content to the reading measure and exposes
@@ -305,50 +294,6 @@ final class ReaderTextView: NSTextView {
     override func layout() {
         super.layout()
         applyReadingMeasure()
-    }
-
-    /// Block decoration is drawn here rather than as text attributes: a run
-    /// background paints only behind glyphs, which reads as a highlight, not as
-    /// a code card or a quotation rule.
-    override func drawBackground(in rect: NSRect) {
-        super.drawBackground(in: rect)
-        guard let composed, let layoutManager, let container = textContainer else { return }
-
-        let origin = textContainerOrigin
-        let cardFill = NSColor.labelColor.withAlphaComponent(0.055)
-        let cardStroke = NSColor.labelColor.withAlphaComponent(0.10)
-        let quoteBar = NSColor.controlAccentColor.withAlphaComponent(0.55)
-
-        for block in composed.blocks {
-            guard block.kind == "code" || block.kind == "blockquote"
-                    || block.kind == "frontmatter" || block.kind == "math" || block.kind == "html"
-            else { continue }
-
-            let glyphRange = layoutManager.glyphRange(forCharacterRange: block.range, actualCharacterRange: nil)
-            var bounds = layoutManager.boundingRect(forGlyphRange: glyphRange, in: container)
-            bounds.origin.x += origin.x
-            bounds.origin.y += origin.y
-            guard bounds.intersects(rect) else { continue }
-
-            if block.kind == "blockquote" {
-                let bar = NSRect(x: bounds.minX - 14, y: bounds.minY - 2, width: 3, height: bounds.height + 4)
-                quoteBar.setFill()
-                NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
-            } else {
-                let card = NSRect(
-                    x: bounds.minX - 14,
-                    y: bounds.minY - 8,
-                    width: max(bounds.width + 28, container.size.width - 4),
-                    height: bounds.height + 16
-                )
-                let path = NSBezierPath(roundedRect: card, xRadius: 8, yRadius: 8)
-                cardFill.setFill()
-                path.fill()
-                cardStroke.setStroke()
-                path.lineWidth = 1
-                path.stroke()
-            }
-        }
     }
 
     private func applyReadingMeasure() {
@@ -401,4 +346,9 @@ final class ReaderTextView: NSTextView {
     @objc private func addCommentFromMenu(_ sender: Any?) {
         NotificationCenter.default.post(name: .mdstarAddComment, object: nil)
     }
+}
+
+extension Notification.Name {
+    static let mdstarAddHighlight = Notification.Name("mdstarAddHighlight")
+    static let mdstarAddComment = Notification.Name("mdstarAddComment")
 }
