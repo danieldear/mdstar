@@ -75,23 +75,20 @@ struct WorkspaceWindow: View {
             .help("Forward")
         }
 
-        // Center: breadcrumb for the active document, plus a pop-up switcher
-        // when several are open. A tab strip inside an NSToolbar is not a macOS
-        // pattern and fought the toolbar's own layout.
+        // Center: the breadcrumb always names the active document; a compact
+        // switcher appears beside it once more than one file is open.
         ToolbarItem(placement: .principal) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                BreadcrumbToolbarItem(
+                    workspaceURL: workspace.workspaceURL,
+                    fileURL: workspace.selectedURL
+                )
                 if workspace.openDocumentURLs.count > 1 {
                     DocumentPickerToolbarItem(
                         urls: workspace.openDocumentURLs,
-                        workspaceURL: workspace.workspaceURL,
                         selectedURL: workspace.selectedTabURL,
                         select: workspace.selectTab,
                         close: workspace.closeTab
-                    )
-                } else {
-                    BreadcrumbToolbarItem(
-                        workspaceURL: workspace.workspaceURL,
-                        fileURL: workspace.selectedURL
                     )
                 }
             }

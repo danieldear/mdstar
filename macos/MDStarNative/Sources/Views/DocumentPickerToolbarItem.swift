@@ -1,14 +1,13 @@
 import SwiftUI
 
-/// Open-document switcher for the toolbar.
+/// Compact switcher for the open documents, shown beside the breadcrumb.
 ///
 /// Replaces the tab strip: a tab bar inside an `NSToolbar` is not a macOS
-/// pattern and fought the toolbar's own layout. This is the standard pop-up
-/// treatment — the current document is always shown, and the menu lists the
-/// rest with a close control on each row.
+/// pattern and fought the toolbar's own layout. Deliberately icon-only — the
+/// breadcrumb already names the current document, so repeating it here would
+/// duplicate information and crowd the title area.
 struct DocumentPickerToolbarItem: View {
     let urls: [URL]
-    let workspaceURL: URL?
     let selectedURL: URL?
     let select: (URL) -> Void
     let close: (URL) -> Void
@@ -17,66 +16,44 @@ struct DocumentPickerToolbarItem: View {
         Menu {
             Section("Open Documents") {
                 ForEach(urls, id: \.self) { url in
-                    documentRow(url)
+                    Button {
+                        select(url)
+                    } label: {
+                        if url == selectedURL {
+                            Label(label(for: url), systemImage: "checkmark")
+                        } else {
+                            Text(label(for: url))
+                        }
+                    }
                 }
             }
 
-            if urls.count > 1 {
-                Divider()
-                Button("Close Others") {
-                    for url in urls where url != selectedURL { close(url) }
-                }
-            }
+            Divider()
+
             if let selectedURL {
                 Button("Close \u{201C}\(selectedURL.lastPathComponent)\u{201D}") {
                     close(selectedURL)
                 }
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.text")
-                    .foregroundStyle(.secondary)
-                Text(title)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if urls.count > 1 {
-                    Text("\(urls.count)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.readerStrongFill, in: Capsule())
+            if urls.count > 1 {
+                Button("Close Others") {
+                    for url in urls where url != selectedURL { close(url) }
                 }
             }
-            .frame(minWidth: 120)
+        } label: {
+            HStack(spacing: 3) {
+                Text("\(urls.count)")
+                    .font(.caption.monospacedDigit())
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.secondary)
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(urls.isEmpty)
-        .help(helpText)
+        .help("Switch between \(urls.count) open documents")
         .accessibilityLabel("Open documents")
-    }
-
-    /// Each row switches documents; the trailing button closes without switching.
-    @ViewBuilder
-    private func documentRow(_ url: URL) -> some View {
-        Button {
-            select(url)
-        } label: {
-            if url == selectedURL {
-                Label(label(for: url), systemImage: "checkmark")
-            } else {
-                Text(label(for: url))
-            }
-        }
-    }
-
-    private var title: String {
-        selectedURL?.lastPathComponent ?? "No Document"
-    }
-
-    private var helpText: String {
-        urls.count > 1 ? "Switch between \(urls.count) open documents" : "Open documents"
     }
 
     /// Disambiguates identical file names by including the parent directory.

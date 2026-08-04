@@ -11,10 +11,24 @@ import SwiftUI
 struct DocumentSearchField: View {
     @ObservedObject var workspace: WorkspaceStore
 
+    /// Recomputing on every edit is what keeps the match count in step with the
+    /// highlighting. Binding straight to `findQuery` updates the highlight but
+    /// leaves `findMatches` stale, which reported "No results" over visibly
+    /// highlighted text.
+    private var queryBinding: Binding<String> {
+        Binding(
+            get: { workspace.findQuery },
+            set: { newValue in
+                workspace.findQuery = newValue
+                workspace.recomputeFind()
+            }
+        )
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             SearchFieldRepresentable(
-                text: $workspace.findQuery,
+                text: queryBinding,
                 placeholder: "Find in Document",
                 onSubmit: { workspace.findNext() },
                 onSubmitBackwards: { workspace.findPrevious() },

@@ -25,9 +25,11 @@ struct BreadcrumbToolbarItem: View {
                 Text("No document open").foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 16)
+        // No internal padding: the toolbar owns spacing between items, and
+        // padding here pushed the path out of alignment with its neighbours.
         .font(.subheadline)
         .lineLimit(1)
+        .fixedSize()
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Current document path")
     }
