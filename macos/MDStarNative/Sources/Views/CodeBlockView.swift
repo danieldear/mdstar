@@ -4,6 +4,7 @@ import SwiftUI
 struct CodeBlockView: View {
     let language: String?
     let code: String
+    @ObservedObject var settings: ReaderSettings
 
     @State private var didCopy = false
     @State private var isHovering = false
@@ -17,7 +18,7 @@ struct CodeBlockView: View {
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code.isEmpty ? AttributedString(" ") : SyntaxHighlighter.highlight(code, language: language))
-                    .font(.system(.callout, design: .monospaced))
+                    .font(settings.codeFont)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 16)

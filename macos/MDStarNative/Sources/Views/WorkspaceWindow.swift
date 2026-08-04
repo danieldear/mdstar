@@ -9,7 +9,6 @@ struct WorkspaceWindow: View {
     @ObservedObject var navigation: NavigationStore
     @ObservedObject var inspector: InspectorStore
     @ObservedObject var settings: ReaderSettings
-    @ObservedObject var annotations: AnnotationStore
 
     @State private var selection: SelectedText?
     @State private var pendingComment: SelectedText?
@@ -76,27 +75,25 @@ struct WorkspaceWindow: View {
             .help("Forward")
         }
 
-        // Center: one document gets the active-file breadcrumb; multiple
-        // documents replace that center area with Safari-style breadcrumb tabs.
+        // Center: breadcrumb for the active document, plus a pop-up switcher
+        // when several are open. A tab strip inside an NSToolbar is not a macOS
+        // pattern and fought the toolbar's own layout.
         ToolbarItem(placement: .principal) {
-            if workspace.openDocumentURLs.count > 1 {
-                DocumentTabBar(
-                    urls: workspace.openDocumentURLs,
-                    workspaceURL: workspace.workspaceURL,
-                    selectedURL: workspace.selectedTabURL,
-                    select: workspace.selectTab,
-                    close: workspace.closeTab
-                )
-                // Do not cap the width: AppKit gives the principal toolbar
-                // item all space left between the leading and trailing groups.
-                // The strip itself handles excess tabs by scrolling.
-                .frame(minWidth: 300, idealWidth: 560, maxWidth:.infinity)
-                .padding(.horizontal, 16)
-            } else {
-                BreadcrumbToolbarItem(
-                    workspaceURL: workspace.workspaceURL,
-                    fileURL: workspace.selectedURL
-                )
+            HStack(spacing: 10) {
+                if workspace.openDocumentURLs.count > 1 {
+                    DocumentPickerToolbarItem(
+                        urls: workspace.openDocumentURLs,
+                        workspaceURL: workspace.workspaceURL,
+                        selectedURL: workspace.selectedTabURL,
+                        select: workspace.selectTab,
+                        close: workspace.closeTab
+                    )
+                } else {
+                    BreadcrumbToolbarItem(
+                        workspaceURL: workspace.workspaceURL,
+                        fileURL: workspace.selectedURL
+                    )
+                }
             }
         }
 
@@ -107,11 +104,15 @@ struct WorkspaceWindow: View {
             }
             .help("Open File")
 
-            Button(action: toggleFind) {
-                Label("Find", systemImage: "magnifyingglass")
+            if workspace.isFindPresented {
+                DocumentSearchField(workspace: workspace)
+            } else {
+                Button(action: toggleFind) {
+                    Label("Find", systemImage: "magnifyingglass")
+                }
+                .disabled(workspace.document == nil)
+                .help("Find in Document (⌘F)")
             }
-            .disabled(workspace.document == nil)
-            .help("Find")
 
             Button(action: workspace.reload) {
                 Label("Reload", systemImage: "arrow.clockwise")
@@ -186,14 +187,6 @@ struct WorkspaceWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .bottom) {
-            if workspace.isFindPresented {
-                FindBar(workspace: workspace)
-                    .padding(.bottom, 22)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .animation(.easeOut(duration: 0.15), value: workspace.isFindPresented)
     }
 
     @ViewBuilder
@@ -217,7 +210,6 @@ struct WorkspaceWindow: View {
             TextKitReaderView(
                 document: document,
                 settings: settings,
-                annotations: annotations,
                 focusedBlockID: workspace.focusedBlockID,
                 searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
                 currentMatchID: workspace.currentMatchID,

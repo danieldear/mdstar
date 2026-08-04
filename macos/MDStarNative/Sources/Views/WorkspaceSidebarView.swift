@@ -10,12 +10,19 @@ struct WorkspaceSidebarView: View {
 
     var body: some View {
         List {
-            Section("Workspace") {
-                workspaceControls
-            }
-
-            Section("Files") {
-                workspaceContent
+            Section {
+                folderRoots
+            } header: {
+                HStack {
+                    Text("Folders")
+                    Spacer()
+                    Button(action: workspace.chooseWorkspace) {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Add Folder to Workspace")
+                    .accessibilityLabel("Add folder to workspace")
+                }
             }
 
             Section("Document Structure") {
@@ -27,32 +34,27 @@ struct WorkspaceSidebarView: View {
         .navigationTitle("MD Star")
     }
 
+    // MARK: - Folders
+
     @ViewBuilder
-    private var workspaceControls: some View {
-        if let workspaceURL = workspace.workspaceURL {
-            Label(workspaceURL.lastPathComponent, systemImage: "folder")
-                .lineLimit(1)
-                .contextMenu {
-                    Button("Change Folder…", action: workspace.chooseWorkspace)
-                    Button("Close Folder", role: .destructive, action: workspace.closeWorkspace)
-                }
-        } else {
+    private var folderRoots: some View {
+        if workspace.folders.isEmpty {
             Button(action: workspace.chooseWorkspace) {
-                Label("Open Workspace…", systemImage: "folder.badge.plus")
+                Label("Add Folder…", systemImage: "folder.badge.plus")
+            }
+        } else {
+            ForEach(workspace.folders) { folder in
+                FolderRootView(
+                    folder: folder,
+                    filter: search,
+                    isSearching: isSearching,
+                    workspace: workspace
+                )
             }
         }
     }
 
-    @ViewBuilder
-    private var workspaceContent: some View {
-        if let tree = workspace.fileTree, let filtered = filterNode(tree, query: search) {
-            FileTreeView(root: filtered, isSearching: isSearching, workspace: workspace)
-        } else if workspace.fileTree != nil {
-            SidebarHint("No files match “\(search)”.")
-        } else {
-            SidebarHint("Open a folder to browse its documents.")
-        }
-    }
+    // MARK: - Outline
 
     @ViewBuilder
     private var outlineContent: some View {
@@ -66,7 +68,9 @@ struct WorkspaceSidebarView: View {
                     isActive: heading.id == workspace.activeHeadingID,
                     isBookmarked: workspace.isBookmarked(heading.id),
                     onSelect: { workspace.focus(blockID: heading.id) },
-                    onToggleBookmark: { workspace.toggleBookmark(id: heading.id, title: heading.text, level: heading.level) }
+                    onToggleBookmark: {
+                        workspace.toggleBookmark(id: heading.id, title: heading.text, level: heading.level)
+                    }
                 )
             }
         }
@@ -78,12 +82,53 @@ struct WorkspaceSidebarView: View {
         let query = search.lowercased()
         return outline.filter { $0.text.lowercased().contains(query) }
     }
+}
 
-    private func filterNode(_ node: FileNode, query: String) -> FileNode? {
+// MARK: - Folder root
+
+private struct FolderRootView: View {
+    let folder: WorkspaceFolder
+    let filter: String
+    let isSearching: Bool
+    @ObservedObject var workspace: WorkspaceStore
+
+    var body: some View {
+        DisclosureGroup {
+            if folder.isUnavailable {
+                SidebarHint("This folder is no longer available.")
+            } else if let tree = folder.tree, let filtered = filterNode(tree) {
+                FileTreeView(root: filtered, isSearching: isSearching, workspace: workspace)
+            } else if folder.tree != nil {
+                SidebarHint("No files match \u{201C}\(filter)\u{201D}.")
+            } else {
+                SidebarHint("Reading folder\u{2026}")
+            }
+        } label: {
+            Label {
+                Text(folder.name).lineLimit(1)
+            } icon: {
+                Image(systemName: folder.isUnavailable ? "folder.badge.questionmark" : "folder")
+                    .foregroundStyle(folder.isUnavailable ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+            }
+        }
+        .contextMenu {
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([folder.url])
+            }
+            Button("Refresh") { workspace.refreshFolders() }
+            Divider()
+            Button("Remove from Workspace", role: .destructive) {
+                workspace.removeFolder(folder)
+            }
+        }
+        .accessibilityLabel("Workspace folder \(folder.name)")
+    }
+
+    private func filterNode(_ node: FileNode) -> FileNode? {
         guard isSearching else { return node }
-        let needle = query.lowercased()
+        let needle = filter.lowercased()
         if node.isDirectory {
-            let children = (node.children ?? []).compactMap { filterNode($0, query: query) }
+            let children = (node.children ?? []).compactMap { filterNode($0) }
             if node.name.lowercased().contains(needle) || !children.isEmpty {
                 return FileNode(id: node.id, name: node.name, path: node.path, kind: node.kind, children: children)
             }
@@ -105,12 +150,16 @@ private struct SidebarHint: View {
     }
 }
 
+// MARK: - Outline row
+
 private struct OutlineRow: View {
     let heading: OutlineItem
     let isActive: Bool
     let isBookmarked: Bool
     let onSelect: () -> Void
     let onToggleBookmark: () -> Void
+
+    @State private var isHovering = false
 
     var body: some View {
         Button(action: onSelect) {
@@ -119,15 +168,25 @@ private struct OutlineRow: View {
                     .fontWeight(isActive ? .semibold : .regular)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if isBookmarked {
-                    Image(systemName: "bookmark.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                // The bookmark control stays visible when set and appears on
+                // hover otherwise — a context menu alone left the feature
+                // effectively undiscoverable.
+                if isBookmarked || isHovering {
+                    Button(action: onToggleBookmark) {
+                        Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                            .font(.caption2)
+                            .foregroundStyle(isBookmarked ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.tertiary))
+                    }
+                    .buttonStyle(.borderless)
+                    .help(isBookmarked ? "Remove Bookmark" : "Bookmark This Section")
+                    .accessibilityLabel(isBookmarked ? "Remove bookmark" : "Add bookmark")
                 }
             }
             .padding(.leading, CGFloat(max(heading.level - 1, 0)) * 12)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
         .contextMenu {
             Button(isBookmarked ? "Remove Bookmark" : "Bookmark", systemImage: isBookmarked ? "bookmark.slash" : "bookmark") {
                 onToggleBookmark()

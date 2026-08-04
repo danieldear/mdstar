@@ -17,6 +17,7 @@ private struct HeadingVisibilityKey: PreferenceKey {
 
 struct DocumentRenderer: View {
     let document: DocumentIR
+    @ObservedObject var settings: ReaderSettings
     let focusedBlockID: String?
     var searchQuery: String = ""
     var currentMatchID: String?
@@ -37,7 +38,7 @@ struct DocumentRenderer: View {
 
                     if !errorDiagnostics.isEmpty {
                         DiagnosticsView(diagnostics: errorDiagnostics)
-                            .frame(maxWidth: Theme.readerContentWidth, alignment: .leading)
+                            .frame(maxWidth: CGFloat(settings.contentWidth), alignment: .leading)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -92,7 +93,7 @@ struct DocumentRenderer: View {
     private func contentWidth(for block: BlockIR) -> CGFloat {
         switch block.kind {
         case "table", "code": .infinity
-        default: Theme.readerContentWidth
+        default: CGFloat(settings.contentWidth)
         }
     }
 
@@ -115,7 +116,7 @@ struct DocumentRenderer: View {
                 VStack(alignment: .leading, spacing: 7) {
                     Text(InlineRenderer.attributedString(
                         block.inlines,
-                        base: Theme.HeadingScale.font(for: level),
+                        base: settings.headingFont(level: level),
                         origin: document.origin,
                         highlight: searchQuery,
                         highlightIsActive: block.id == currentMatchID
@@ -162,19 +163,19 @@ struct DocumentRenderer: View {
             )
 
         case "code":
-            return AnyView(CodeBlockView(language: block.language, code: block.code ?? ""))
+            return AnyView(CodeBlockView(language: block.language, code: block.code ?? "", settings: settings))
 
         case "table":
-            return AnyView(DocumentTableView(headers: block.headers, rows: block.rows, origin: document.origin))
+            return AnyView(DocumentTableView(headers: block.headers, rows: block.rows, origin: document.origin, settings: settings))
 
         case "thematic_break":
             return AnyView(Divider().padding(.vertical, 6))
 
         case "frontmatter":
-            return AnyView(FrontmatterView(raw: block.raw ?? ""))
+            return AnyView(FrontmatterView(raw: block.raw ?? "", settings: settings))
 
         case "math", "html":
-            return AnyView(CodeBlockView(language: block.kind, code: block.raw ?? ""))
+            return AnyView(CodeBlockView(language: block.kind, code: block.raw ?? "", settings: settings))
 
         default:
             if !block.children.isEmpty {
@@ -244,11 +245,12 @@ struct DocumentRenderer: View {
     private func paragraphText(_ inlines: [InlineIR], blockID: String) -> some View {
         Text(InlineRenderer.attributedString(
             inlines,
+            base: settings.bodyFont,
             origin: document.origin,
             highlight: searchQuery,
             highlightIsActive: blockID == currentMatchID
         ))
-        .lineSpacing(4.5)
+        .lineSpacing(settings.lineSpacing)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -339,6 +341,7 @@ private struct MarkdownImageView: View {
 /// falling back to a raw block when it can't be parsed into simple pairs.
 private struct FrontmatterView: View {
     let raw: String
+    @ObservedObject var settings: ReaderSettings
 
     private var pairs: [(String, String)] {
         raw.split(separator: "\n").compactMap { line in
@@ -354,7 +357,7 @@ private struct FrontmatterView: View {
 
     var body: some View {
         if pairs.isEmpty {
-            CodeBlockView(language: "frontmatter", code: raw)
+            CodeBlockView(language: "frontmatter", code: raw, settings: settings)
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 Label("Frontmatter", systemImage: "text.alignleft")

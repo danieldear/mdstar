@@ -33,6 +33,31 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
     var sample: String { "The quick brown fox" }
 }
 
+/// Reader chrome theme. `system` follows the macOS appearance; the others pin it.
+enum AppearancePreference: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
+
 /// Typography and appearance preferences for the reader.
 ///
 /// Backed by `UserDefaults` through `@AppStorage`-equivalent manual storage so
@@ -45,10 +70,15 @@ final class ReaderSettings: ObservableObject {
     static let defaultFontSize: Double = 15
 
     private enum Key {
+        static let appearance = "mdstar.native.appearance"
         static let fontFamily = "mdstar.native.reader.fontFamily"
         static let fontSize = "mdstar.native.reader.fontSize"
         static let lineSpacing = "mdstar.native.reader.lineSpacing"
         static let contentWidth = "mdstar.native.reader.contentWidth"
+    }
+
+    @Published var appearance: AppearancePreference {
+        didSet { UserDefaults.standard.set(appearance.rawValue, forKey: Key.appearance) }
     }
 
     @Published var fontFamily: ReaderFontFamily {
@@ -79,6 +109,8 @@ final class ReaderSettings: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        appearance = AppearancePreference(rawValue: defaults.string(forKey: Key.appearance) ?? "")
+            ?? .system
         fontFamily = ReaderFontFamily(rawValue: defaults.string(forKey: Key.fontFamily) ?? "")
             ?? .system
         let storedSize = defaults.double(forKey: Key.fontSize)
@@ -137,51 +169,5 @@ final class ReaderSettings: ObservableObject {
     /// Slightly smaller face for table cells and captions.
     var secondaryFont: Font {
         .system(size: fontSize - 1, design: fontFamily.design)
-    }
-
-    // MARK: - AppKit fonts
-    //
-    // The TextKit reader composes an NSAttributedString, so it needs concrete
-    // NSFonts rather than SwiftUI's opaque Font values.
-
-    private var nsDesign: NSFontDescriptor.SystemDesign {
-        switch fontFamily {
-        case .system: .default
-        case .serif: .serif
-        case .rounded: .rounded
-        case .monospaced: .monospaced
-        }
-    }
-
-    private func nsFont(size: Double, weight: NSFont.Weight) -> NSFont {
-        let base = NSFont.systemFont(ofSize: size, weight: weight)
-        guard let descriptor = base.fontDescriptor.withDesign(nsDesign),
-              let font = NSFont(descriptor: descriptor, size: size) else {
-            return base
-        }
-        return font
-    }
-
-    var nsBodyFont: NSFont { nsFont(size: fontSize, weight: .regular) }
-
-    var nsSecondaryFont: NSFont { nsFont(size: fontSize - 1, weight: .regular) }
-
-    func nsHeadingFont(level: Int) -> NSFont {
-        nsFont(size: headingPointSize(level: level), weight: level <= 1 ? .bold : .semibold)
-    }
-
-    /// Code always uses a monospaced face regardless of the reading typeface.
-    var nsCodeFont: NSFont {
-        NSFont.monospacedSystemFont(ofSize: fontSize - 1.5, weight: .regular)
-    }
-
-    /// Applies bold/italic traits on top of any of the fonts above.
-    func nsFont(_ font: NSFont, bold: Bool, italic: Bool) -> NSFont {
-        guard bold || italic else { return font }
-        var traits = font.fontDescriptor.symbolicTraits
-        if bold { traits.insert(.bold) }
-        if italic { traits.insert(.italic) }
-        let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
-        return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
     }
 }

@@ -7,6 +7,7 @@ struct DocumentTableView: View {
     let headers: [[InlineIR]]
     let rows: [[[InlineIR]]]
     let origin: String
+    @ObservedObject var settings: ReaderSettings
 
     private var columnCount: Int {
         max(headers.count, rows.map(\.count).max() ?? 0)
@@ -51,7 +52,7 @@ struct DocumentTableView: View {
     private func cell(_ inlines: [InlineIR], header: Bool, zebra: Bool) -> some View {
         Text(InlineRenderer.attributedString(
             inlines,
-            base: header ? .system(.callout, weight: .semibold) : .callout,
+            base: header ? settings.secondaryFont.weight(.semibold) : settings.secondaryFont,
             origin: origin
         ))
         .textSelection(.enabled)

@@ -7,8 +7,6 @@ struct MDStarApp: App {
     @StateObject private var navigation = NavigationStore()
     @StateObject private var inspector = InspectorStore()
     @StateObject private var settings = ReaderSettings()
-    @StateObject private var annotations = AnnotationStore()
-    @AppStorage("mdstar.native.appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some Scene {
         WindowGroup("MD Star") {
@@ -16,12 +14,11 @@ struct MDStarApp: App {
                 workspace: workspace,
                 navigation: navigation,
                 inspector: inspector,
-                settings: settings,
-                annotations: annotations
+                settings: settings
             )
-                .frame(minWidth: 880, minHeight: 620)
-                .onOpenURL { url in workspace.openFile(url, recordHistory: true) }
-                .preferredColorScheme(AppearancePreference(rawValue: appearance)?.colorScheme)
+            .frame(minWidth: 880, minHeight: 620)
+            .onOpenURL { url in workspace.openFile(url, recordHistory: true) }
+            .preferredColorScheme(settings.appearance.colorScheme)
         }
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
@@ -63,6 +60,16 @@ struct MDStarApp: App {
                 Button("Toggle Source") { if workspace.document != nil { workspace.toggleSourcePreview() } }
                     .keyboardShortcut("/", modifiers: .command)
                     .disabled(workspace.document == nil)
+                Divider()
+                // Standard macOS text-zoom shortcuts, as in Safari and Preview.
+                Button("Bigger Text") { settings.zoomIn() }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .disabled(!settings.canZoomIn)
+                Button("Smaller Text") { settings.zoomOut() }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(!settings.canZoomOut)
+                Button("Actual Size") { settings.resetZoom() }
+                    .keyboardShortcut("0", modifiers: .command)
                 Divider()
                 Button(inspector.isVisible ? "Hide Inspector" : "Show Inspector") {
                     inspector.isVisible.toggle()
