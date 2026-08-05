@@ -1,29 +1,33 @@
 import AppKit
 import SwiftUI
 
-/// Lets the SwiftUI detail surface extend through the unified titlebar.
+/// Puts the window into full-size content mode.
 ///
-/// Full-size content lets the system titlebar material blur the native reader
-/// beneath it. No custom titlebar overlay is required.
+/// A unified toolbar blurs whatever sits beneath it, so the document has to
+/// extend under the titlebar for the effect to appear at all. Without this the
+/// content stops at the toolbar's lower edge and the bar renders flat, with
+/// nothing behind it to sample.
 struct WindowConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
+        // The view is not in a window during make; configure once it is.
         DispatchQueue.main.async { [weak view] in
-            if let window = view?.window { configure(window) }
+            guard let window = view?.window else { return }
+            Self.configure(window)
         }
         return view
     }
 
-    func updateNSView(_ view: NSView, context: Context) {
-        if let window = view.window { configure(window) }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let window = nsView.window else { return }
+        Self.configure(window)
     }
 
-    private func configure(_ window: NSWindow) {
+    private static func configure(_ window: NSWindow) {
+        guard !window.styleMask.contains(.fullSizeContentView) else { return }
         window.styleMask.insert(.fullSizeContentView)
-        window.toolbarStyle = .unified
-        // Keep AppKit's own titlebar material. With a native NSTextView below
-        // it, this is the only layer that should create the fade/blur.
+        // The titlebar keeps its material; only the content extends beneath it.
         window.titlebarAppearsTransparent = false
-        window.titlebarSeparatorStyle = .none
+        window.isMovableByWindowBackground = false
     }
 }

@@ -29,6 +29,10 @@ enum ReaderTheme {
 
         return """
         :root {
+          /* Pins native controls (checkboxes) to the reader's theme. Leaving
+             this to the OS draws light-mode controls on a dark page whenever
+             the reader's appearance is overridden. */
+          color-scheme: \(isDark ? "dark" : "light");
           --reader-font-family: \(cssFontStack(for: settings.fontFamily));
           --reader-font-size: \(Int(settings.fontSize))px;
           --reader-line-height: \(lineHeight(for: settings));

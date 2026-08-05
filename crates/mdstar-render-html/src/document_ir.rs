@@ -76,7 +76,10 @@ fn render_block(block: &BlockIr, out: &mut String) {
         }
 
         "code" => {
-            let code = escape_html(block.code.as_deref().unwrap_or_default());
+            let code = crate::highlight::highlight_code(
+                block.code.as_deref().unwrap_or_default(),
+                block.language.as_deref(),
+            );
             match block.language.as_deref().filter(|lang| !lang.is_empty()) {
                 Some(language) => out.push_str(&format!(
                     "<pre id=\"{id}\" data-language=\"{0}\"><code class=\"language-{0}\">{code}</code></pre>\n",
@@ -87,7 +90,9 @@ fn render_block(block: &BlockIr, out: &mut String) {
         }
 
         "table" => {
-            out.push_str(&format!("<div class=\"table-scroll\"><table id=\"{id}\">\n"));
+            out.push_str(&format!(
+                "<div class=\"table-scroll\"><table id=\"{id}\">\n"
+            ));
             if !block.headers.is_empty() {
                 out.push_str("<thead><tr>");
                 for header in &block.headers {

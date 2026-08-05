@@ -42,16 +42,6 @@ struct WorkspaceWindow: View {
             }
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: acceptDrop)
-        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddHighlight)) { _ in addHighlight() }
-        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddComment)) { _ in beginComment() }
-        .sheet(item: $pendingComment) { target in
-            CommentComposer(
-                snippet: target.text,
-                note: $commentDraft,
-                onCancel: { pendingComment = nil; commentDraft = "" },
-                onSave: { saveComment(for: target) }
-            )
-        }
         .background(WindowConfigurator())
         .task { workspace.restoreWorkspaceIfNeeded() }
     }

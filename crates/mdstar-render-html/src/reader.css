@@ -35,6 +35,9 @@ html, body {
   margin: 0;
   padding: 0;
   background: transparent;
+  /* Lets native controls (checkboxes) match the reader's appearance instead of
+     always drawing their light-mode form. */
+  color-scheme: light dark;
   -webkit-text-size-adjust: none;
   -webkit-font-smoothing: antialiased;
 }
@@ -123,17 +126,15 @@ ul.task-list { list-style: none; padding-left: 0.1em; }
 .task-item > input[type="checkbox"] {
   margin: 0;
   flex: none;
-  width: 1.02em;
-  height: 1.02em;
+  /* The browser default draws far smaller than the text beside it. */
+  width: 15px;
+  height: 15px;
   accent-color: var(--reader-accent);
-  /* Default sizing renders a control much smaller than the text beside it. */
-  appearance: auto;
-  /* Align the box with the first line rather than the flex baseline. */
-  margin-top: 0.24em;
+  margin-top: 0.22em;
 }
 
 .task-item > p { margin: 0; }
-.task-done { color: var(--reader-secondary); }
+.task-done > p { color: var(--reader-secondary); }
 
 /* Code -------------------------------------------------------------------- */
 
@@ -161,7 +162,7 @@ pre > code {
   background: none;
   padding: 0;
   border-radius: 0;
-  font-size: 0.875em;
+  font-size: 0.92em;
   line-height: 1.55;
   white-space: pre;
 }

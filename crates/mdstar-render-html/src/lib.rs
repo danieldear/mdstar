@@ -1,4 +1,5 @@
 pub mod document_ir;
+pub mod highlight;
 pub mod sanitize;
 
 pub use document_ir::{base_stylesheet, render_document_ir};
