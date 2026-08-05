@@ -56,7 +56,6 @@ struct WebReaderView: NSViewRepresentable {
             coordinator?.hasSelection ?? false
         }
         webView.navigationDelegate = context.coordinator
-        webView.setValue(false, forKey: "drawsBackground")
         webView.allowsMagnification = false
 
         context.coordinator.webView = webView

@@ -29,6 +29,9 @@ struct WorkspaceWindow: View {
                     workspace: workspace,
                     annotations: annotations
                 )
+                // The document runs beneath the toolbar; the stylesheet's top
+                // band and padding keep the first lines clear of it.
+                .ignoresSafeArea(.container, edges: .top)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar { toolbarContent }
@@ -38,6 +41,7 @@ struct WorkspaceWindow: View {
             }
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: acceptDrop)
+        .background(WindowConfigurator())
         .task { workspace.restoreWorkspaceIfNeeded() }
     }
 

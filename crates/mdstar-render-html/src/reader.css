@@ -23,6 +23,10 @@
   --reader-mark: rgba(255, 214, 10, 0.45);
   --reader-mark-active: rgba(255, 149, 0, 0.75);
 
+  /* Page tone, and the slightly distinct tone the first band fades from. */
+  --reader-bg: #ffffff;
+  --reader-bg-top: #f2f2f4;
+
   --reader-syntax-comment: #3b7a2e;
   --reader-syntax-string: #c4351f;
   --reader-syntax-number: #1c00cf;
@@ -34,7 +38,6 @@
 html, body {
   margin: 0;
   padding: 0;
-  background: transparent;
   /* Lets native controls (checkboxes) match the reader's appearance instead of
      always drawing their light-mode form. */
   color-scheme: light dark;
@@ -47,10 +50,15 @@ body {
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
   color: var(--reader-text);
-  /* The reader starts below the toolbar rather than beneath it: a web view
-     renders in its own layer, which the titlebar's vibrancy cannot sample, so
-     content passing under the bar is hidden rather than blurred. */
-  padding: 26px 40px 120px;
+  padding: 34px 40px 120px;
+
+  /* The document runs beneath the toolbar. The first band of the viewport
+     carries a slightly different tone that resolves into the page colour, so
+     the boundary reads as a transition rather than a cut. Fixed attachment
+     keeps it anchored to the window while the text scrolls through it. */
+  background-color: var(--reader-bg);
+  background-image: linear-gradient(to bottom, var(--reader-bg-top), var(--reader-bg) 46px);
+  background-attachment: fixed;
 }
 
 #reader-root {
