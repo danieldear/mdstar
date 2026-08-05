@@ -29,10 +29,6 @@ struct WorkspaceWindow: View {
                     workspace: workspace,
                     annotations: annotations
                 )
-                // The inset is imposed at this level, so the document has to
-                // escape it here; doing so deeper leaves the reader clipped to
-                // a parent that already stops below the toolbar.
-                .ignoresSafeArea(.container, edges: .top)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar { toolbarContent }
@@ -42,7 +38,6 @@ struct WorkspaceWindow: View {
             }
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: acceptDrop)
-        .background(WindowConfigurator())
         .task { workspace.restoreWorkspaceIfNeeded() }
     }
 

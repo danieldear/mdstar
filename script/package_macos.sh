@@ -5,7 +5,7 @@
 #   - the native SwiftUI reader (CFBundleExecutable),
 #   - the `md` CLI binary, so `install.sh --link-app` works from one download,
 #   - the Rust FFI dylib,
-#   - full document-type associations (and an icon only if given),
+#   - the app icon and full document-type associations,
 # and optionally a signed, notarized DMG.
 #
 # Usage:
@@ -13,7 +13,7 @@
 #
 # Options:
 #   --arch <universal|arm64|x86_64>  Target architecture (default: universal)
-#   --icon <path.icns>               Embed an app icon (default: none)
+#   --icon <path.icns>               Use a different app icon
 #   --dmg                            Also build a DMG for distribution
 #   --no-cli                         Skip embedding the `md` CLI binary
 #   --help                           Show this message
@@ -43,9 +43,8 @@ NATIVE_DIR="$ROOT_DIR/macos/MDStarNative"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
-# No icon by default: the bundle keeps the system's generic app icon until one
-# is chosen deliberately. Pass --icon <path.icns> to embed one.
-ICON_SOURCE=""
+# Override with --icon <path.icns> when the app gets artwork of its own.
+ICON_SOURCE="$ROOT_DIR/crates/mdstar-app/icons/icon.icns"
 
 ARCH_MODE="universal"
 BUILD_DMG=false

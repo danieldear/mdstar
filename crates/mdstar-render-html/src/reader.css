@@ -47,9 +47,10 @@ body {
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
   color: var(--reader-text);
-  /* The view extends under the titlebar so the toolbar can blur the content
-     scrolling beneath it; the top inset keeps the first line clear of it. */
-  padding: 62px 40px 120px;
+  /* The reader starts below the toolbar rather than beneath it: a web view
+     renders in its own layer, which the titlebar's vibrancy cannot sample, so
+     content passing under the bar is hidden rather than blurred. */
+  padding: 26px 40px 120px;
 }
 
 #reader-root {
