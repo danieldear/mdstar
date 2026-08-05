@@ -171,6 +171,28 @@ pub unsafe extern "C" fn mdstar_document_html_from_file(path: *const c_char) -> 
     })
 }
 
+/// Render in-memory Markdown to sanitized semantic HTML.
+///
+/// The file-based variant cannot show unsaved work, so an editor that wants a
+/// live preview renders its buffer through this instead. `origin` scopes the
+/// deterministic block identifiers and resolves relative links.
+///
+/// # Safety
+/// `input` and `origin` must be valid, null-terminated UTF-8 C string pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mdstar_document_html(
+    input: *const c_char,
+    origin: *const c_char,
+) -> *mut c_char {
+    ffi_string(|| {
+        let markdown = required_utf8(input, "input").map_err(|error| error.message)?;
+        let origin = required_utf8(origin, "origin").map_err(|error| error.message)?;
+        let ir = parse_document_ir_with_diagnostics(markdown, origin)
+            .map_err(|error| error.to_string())?;
+        Ok(render_document_ir(&ir))
+    })
+}
+
 /// Structural stylesheet shared by every HTML consumer.
 ///
 /// Colours and metrics are custom properties, so a frontend themes the document

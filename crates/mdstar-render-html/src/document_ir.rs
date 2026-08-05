@@ -87,7 +87,7 @@ fn render_block(block: &BlockIr, out: &mut String) {
         }
 
         "table" => {
-            out.push_str(&format!("<table id=\"{id}\">\n"));
+            out.push_str(&format!("<div class=\"table-scroll\"><table id=\"{id}\">\n"));
             if !block.headers.is_empty() {
                 out.push_str("<thead><tr>");
                 for header in &block.headers {
@@ -103,7 +103,7 @@ fn render_block(block: &BlockIr, out: &mut String) {
                 }
                 out.push_str("</tr>\n");
             }
-            out.push_str("</tbody>\n</table>\n");
+            out.push_str("</tbody>\n</table></div>\n");
         }
 
         "thematic_break" => out.push_str(&format!("<hr id=\"{id}\" />\n")),

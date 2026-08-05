@@ -18,6 +18,9 @@ struct WebReaderView: NSViewRepresentable {
     @ObservedObject var settings: ReaderSettings
     @ObservedObject var annotations: AnnotationStore
 
+    /// Live source. Rendering this rather than the file is what makes the split
+    /// view update while typing, before anything is saved.
+    let source: String
     let focusedBlockID: String?
     var searchQuery: String = ""
 
@@ -52,7 +55,9 @@ struct WebReaderView: NSViewRepresentable {
         webView.allowsMagnification = false
 
         context.coordinator.webView = webView
-        context.coordinator.load(document: document, fileURL: fileURL, settings: settings)
+        context.coordinator.load(
+            document: document, fileURL: fileURL, source: source, settings: settings
+        )
         return webView
     }
 
@@ -67,11 +72,14 @@ struct WebReaderView: NSViewRepresentable {
             family: settings.fontFamily,
             lineSpacing: settings.lineSpacing,
             contentWidth: settings.contentWidth,
-            isDark: webView.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            isDark: webView.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua,
+            sourceHash: source.hashValue
         )
         if coordinator.signature != signature {
             coordinator.signature = signature
-            coordinator.load(document: document, fileURL: fileURL, settings: settings)
+            coordinator.load(
+                document: document, fileURL: fileURL, source: source, settings: settings
+            )
         }
 
         coordinator.apply(searchQuery: searchQuery)
@@ -93,6 +101,8 @@ struct WebReaderView: NSViewRepresentable {
         let lineSpacing: Double
         let contentWidth: Double
         let isDark: Bool
+        /// Included so editing the buffer re-renders the preview.
+        let sourceHash: Int
     }
 
     // MARK: - Coordinator
@@ -117,12 +127,16 @@ struct WebReaderView: NSViewRepresentable {
             self.parent = parent
         }
 
-        func load(document: DocumentIR, fileURL: URL?, settings: ReaderSettings) {
+        func load(document: DocumentIR, fileURL: URL?, source: String, settings: ReaderSettings) {
             guard let webView else { return }
             let url = fileURL ?? URL(fileURLWithPath: document.origin)
             resourceRoot = url.deletingLastPathComponent()
 
-            guard let body = htmlService.html(forFileAt: url) else { return }
+            // Prefer the buffer so unsaved edits are visible; fall back to disk.
+            let rendered = source.isEmpty
+                ? htmlService.html(forFileAt: url)
+                : htmlService.html(forSource: source, origin: url.path)
+            guard let body = rendered else { return }
             let isDark = webView.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             let page = Self.page(
                 body: body,

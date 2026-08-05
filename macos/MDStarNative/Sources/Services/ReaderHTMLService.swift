@@ -3,6 +3,12 @@ import Foundation
 @_silgen_name("mdstar_document_html_from_file")
 private func mdstarDocumentHTMLFromFile(_ path: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("mdstar_document_html")
+private func mdstarDocumentHTML(
+    _ input: UnsafePointer<CChar>,
+    _ origin: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("mdstar_reader_stylesheet")
 private func mdstarReaderStylesheet() -> UnsafeMutablePointer<CChar>?
 
@@ -20,6 +26,20 @@ struct ReaderHTMLService: Sendable {
             guard let result = mdstarDocumentHTMLFromFile(pointer) else { return nil }
             defer { mdstarStringFree(result) }
             return String(cString: result)
+        }
+    }
+
+    /// HTML for in-memory Markdown. Used for the live preview, where the file
+    /// on disk does not yet reflect what is being edited.
+    func html(forSource source: String, origin: String) -> String? {
+        source.withCString { sourcePointer in
+            origin.withCString { originPointer in
+                guard let result = mdstarDocumentHTML(sourcePointer, originPointer) else {
+                    return nil
+                }
+                defer { mdstarStringFree(result) }
+                return String(cString: result)
+            }
         }
     }
 

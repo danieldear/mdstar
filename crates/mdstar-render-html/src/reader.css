@@ -44,8 +44,9 @@ body {
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
   color: var(--reader-text);
-  /* Room for the toolbar above and comfortable run-out below. */
-  padding: 28px 40px 96px;
+  /* The view extends under the titlebar so the toolbar can blur the content
+     scrolling beneath it; the top inset keeps the first line clear of it. */
+  padding: 62px 40px 120px;
 }
 
 #reader-root {
@@ -61,6 +62,15 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 600;
   text-wrap: balance;
   scroll-margin-top: 24px;
+}
+
+/* Code in a heading would otherwise scale with it and dominate the line. */
+h1 code, h2 code, h3 code, h4 code, h5 code, h6 code {
+  font-size: 0.86em;
+  font-weight: 550;
+  padding: 0.08em 0.3em;
+  background: var(--reader-fill);
+  vertical-align: baseline;
 }
 
 h1 { font-size: 2.05em; font-weight: 700; letter-spacing: -0.02em; margin-top: 0.2em; }
@@ -102,20 +112,24 @@ li { margin: 0.3em 0; }
 li > p { margin: 0 0 0.4em; }
 li > :last-child { margin-bottom: 0; }
 
-ul.task-list { list-style: none; padding-left: 0.2em; }
+ul.task-list { list-style: none; padding-left: 0.1em; }
 
 .task-item {
   display: flex;
-  align-items: baseline;
-  gap: 0.6em;
+  align-items: flex-start;
+  gap: 0.55em;
 }
 
 .task-item > input[type="checkbox"] {
   margin: 0;
   flex: none;
+  width: 1.02em;
+  height: 1.02em;
   accent-color: var(--reader-accent);
-  /* Nudge onto the text baseline; checkboxes align to the box otherwise. */
-  transform: translateY(0.12em);
+  /* Default sizing renders a control much smaller than the text beside it. */
+  appearance: auto;
+  /* Align the box with the first line rather than the flex baseline. */
+  margin-top: 0.24em;
 }
 
 .task-item > p { margin: 0; }
@@ -160,26 +174,31 @@ pre > code {
 
 /* Tables ------------------------------------------------------------------ */
 
+/* Tables scroll on their own so a wide one never widens the whole column. */
+.table-scroll { overflow-x: auto; margin: 0 0 1.2em; }
+
 table {
-  width: 100%;
-  margin: 0 0 1.2em;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.95em;
+  min-width: 100%;
   border: 1px solid var(--reader-hairline);
   border-radius: 10px;
+  /* border-collapse: collapse would defeat the corner radius. */
   overflow: hidden;
-  font-size: 0.95em;
-  display: table;
 }
 
 th, td {
   text-align: left;
   padding: 0.55em 0.85em;
   border-bottom: 1px solid var(--reader-hairline);
+  border-right: 1px solid var(--reader-hairline);
 }
 
+th:last-child, td:last-child { border-right: none; }
+tbody tr:last-child td { border-bottom: none; }
 th { background: var(--reader-fill-strong); font-weight: 600; }
 tbody tr:nth-child(even) td { background: var(--reader-fill); }
-tbody tr:last-child td { border-bottom: none; }
 
 /* Media ------------------------------------------------------------------- */
 

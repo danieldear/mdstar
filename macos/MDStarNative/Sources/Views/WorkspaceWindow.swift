@@ -80,7 +80,7 @@ struct WorkspaceWindow: View {
         // Center: the breadcrumb always names the active document; a compact
         // switcher appears beside it once more than one file is open.
         ToolbarItem(placement: .principal) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 BreadcrumbToolbarItem(
                     workspaceURL: workspace.workspaceURL,
                     fileURL: workspace.selectedURL
@@ -285,6 +285,7 @@ struct WorkspaceWindow: View {
                     fileURL: workspace.selectedURL,
                     settings: settings,
                     annotations: annotations,
+                    source: workspace.rawText,
                     focusedBlockID: workspace.focusedBlockID,
                     searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
                     onOpenLink: openDocumentLink,
@@ -294,6 +295,7 @@ struct WorkspaceWindow: View {
                         workspace.reportFindResults(count: count, index: index)
                     }
                 )
+                .ignoresSafeArea(.container, edges: .top)
             case .textKit:
                 TextKitReaderView(
                     document: document,

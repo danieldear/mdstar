@@ -41,13 +41,11 @@ struct DocumentPickerToolbarItem: View {
                 }
             }
         } label: {
-            HStack(spacing: 3) {
-                Text("\(urls.count)")
-                    .font(.caption.monospacedDigit())
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.secondary)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
