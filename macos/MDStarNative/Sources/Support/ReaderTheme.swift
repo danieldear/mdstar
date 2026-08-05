@@ -19,9 +19,6 @@ enum ReaderTheme {
         let fillStrong = isDark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.075)"
         let codeBackground = isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.045)"
         let pageBackground = isDark ? "#1e1e20" : "#ffffff"
-        // Slightly lifted so the band beneath the toolbar is perceptible
-        // without reading as a separate surface.
-        let pageBackgroundTop = isDark ? "#282829" : "#f1f1f3"
         let mark = isDark ? "rgba(255,214,10,0.34)" : "rgba(255,214,10,0.45)"
         let markActive = isDark ? "rgba(255,159,10,0.72)" : "rgba(255,149,0,0.75)"
 
@@ -51,7 +48,6 @@ enum ReaderTheme {
           --reader-fill-strong: \(fillStrong);
           --reader-code-bg: \(codeBackground);
           --reader-bg: \(pageBackground);
-          --reader-bg-top: \(pageBackgroundTop);
           --reader-mark: \(mark);
           --reader-mark-active: \(markActive);
 
