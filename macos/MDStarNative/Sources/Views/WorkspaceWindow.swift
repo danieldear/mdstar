@@ -29,16 +29,13 @@ struct WorkspaceWindow: View {
                     workspace: workspace,
                     annotations: annotations
                 )
-                // The native reader has its own safe content inset and a
-                // titlebar material layer, so document text can scroll behind
-                // the toolbar and fade naturally rather than being clipped.
+                // The inset is imposed at this level, so the document has to
+                // escape it here; doing so deeper leaves the reader clipped to
+                // a parent that already stops below the toolbar.
                 .ignoresSafeArea(.container, edges: .top)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar { toolbarContent }
-        // Without this the bar can render without its material, which is what
-        // made the document appear through it unblurred.
-        .toolbarBackground(.visible, for: .windowToolbar)
         .onReceive(NotificationCenter.default.publisher(for: .mdstarOpenedDocument)) { notification in
             if let url = notification.object as? URL {
                 navigation.record(url)
@@ -288,7 +285,6 @@ struct WorkspaceWindow: View {
                         workspace.reportFindResults(count: count, index: index)
                     }
                 )
-                .ignoresSafeArea(.container, edges: .top)
             case .textKit:
                 TextKitReaderView(
                     document: document,
