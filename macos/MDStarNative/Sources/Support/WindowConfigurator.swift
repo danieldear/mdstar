@@ -27,8 +27,10 @@ struct WindowConfigurator: NSViewRepresentable {
             window.styleMask.insert(.fullSizeContentView)
         }
         window.toolbarStyle = .unified
-        // Re-asserted every update: SwiftUI resets this as the toolbar rebuilds,
-        // and a transparent titlebar leaves the bar without its material.
-        window.titlebarAppearsTransparent = false
+        // The titlebar draws nothing of its own: its material cannot sample the
+        // web view, so the page supplies the blur instead and the bar must let
+        // it show through. Re-asserted every update because SwiftUI resets this
+        // as the toolbar rebuilds.
+        window.titlebarAppearsTransparent = true
     }
 }

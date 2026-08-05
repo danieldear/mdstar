@@ -52,31 +52,23 @@ body {
   background-color: var(--reader-bg);
 }
 
-/* The titlebar's material cannot sample a web view's content, so text passing
-   under the toolbar would otherwise be cut off sharply. This band is pinned to
-   the viewport and fades the page colour out over the same distance, so text
-   dissolves into the toolbar as it scrolls up rather than disappearing at an
-   edge. It never intercepts clicks. */
+/* The titlebar's material cannot sample a web view's content — a web view
+   composites out of process — so text scrolling under the toolbar would meet a
+   hard edge. The blur is therefore done inside the page: a band pinned to the
+   top of the viewport applies a backdrop filter, frosting the document behind
+   it exactly where the toolbar sits. It never intercepts clicks. */
 body::before {
   content: "";
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  height: 48px;
+  height: 52px;
   pointer-events: none;
   z-index: 10;
-  background: linear-gradient(
-    to bottom,
-    var(--reader-bg) 38%,
-    color-mix(in srgb, var(--reader-bg) 55%, transparent) 72%,
-    transparent
-  );
-}
-
-#reader-root {
-  max-width: var(--reader-measure);
-  margin: 0 auto;
+  -webkit-backdrop-filter: blur(18px) saturate(1.8);
+  backdrop-filter: blur(18px) saturate(1.8);
+  background: color-mix(in srgb, var(--reader-bg) 55%, transparent);
 }
 
 /* Headings ---------------------------------------------------------------- */

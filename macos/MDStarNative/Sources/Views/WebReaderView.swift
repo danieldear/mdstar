@@ -28,8 +28,6 @@ struct WebReaderView: NSViewRepresentable {
     var onActiveHeadingChange: (String?) -> Void = { _ in }
     var onSelectionChange: (WebSelection?) -> Void = { _ in }
     var onFindResults: (Int, Int) -> Void = { _, _ in }
-    /// Vertical scroll position, used to fade the toolbar as the page moves.
-    var onScrollOffsetChange: (CGFloat) -> Void = { _ in }
 
     private static let bridgeWorld = WKContentWorld.world(name: "mdstar.bridge")
     private static let resourceScheme = "mdstar-resource"
@@ -47,7 +45,7 @@ struct WebReaderView: NSViewRepresentable {
                 in: Self.bridgeWorld
             )
         )
-        for handler in ["activeHeading", "openLink", "selection", "findResults", "scrollOffset"] {
+        for handler in ["activeHeading", "openLink", "selection", "findResults"] {
             controller.add(context.coordinator, contentWorld: Self.bridgeWorld, name: handler)
         }
 
@@ -274,10 +272,6 @@ struct WebReaderView: NSViewRepresentable {
                 parent.onSelectionChange(
                     WebSelection(text: text, blockID: blockID, start: start, end: end)
                 )
-
-            case "scrollOffset":
-                guard let offset = message.body as? Double else { return }
-                parent.onScrollOffsetChange(CGFloat(offset))
 
             case "findResults":
                 guard let payload = message.body as? [String: Any],

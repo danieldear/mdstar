@@ -16,9 +16,6 @@ struct WorkspaceWindow: View {
     @State private var pendingComment: SelectedText?
     @State private var commentDraft = ""
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    /// Set once the document has scrolled away from the top. Toolbar content
-    /// dims so the bar recedes while reading and returns on the way back up.
-    @State private var isScrolledAway = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -42,7 +39,6 @@ struct WorkspaceWindow: View {
             if let url = notification.object as? URL {
                 navigation.record(url)
             }
-            isScrolledAway = false
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: acceptDrop)
         .background(WindowConfigurator())
@@ -78,7 +74,7 @@ struct WorkspaceWindow: View {
                     workspaceURL: workspace.workspaceURL,
                     fileURL: workspace.selectedURL
                 )
-                .opacity(isScrolledAway ? 0.35 : 1)
+
                 if workspace.openDocumentURLs.count > 1 {
                     DocumentPickerToolbarItem(
                         urls: workspace.openDocumentURLs,
@@ -287,13 +283,6 @@ struct WorkspaceWindow: View {
                     onSelectionChange: { webSelection = $0 },
                     onFindResults: { count, index in
                         workspace.reportFindResults(count: count, index: index)
-                    },
-                    onScrollOffsetChange: { offset in
-                        let scrolled = offset > 40
-                        guard scrolled != isScrolledAway else { return }
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isScrolledAway = scrolled
-                        }
                     }
                 )
             case .textKit:
