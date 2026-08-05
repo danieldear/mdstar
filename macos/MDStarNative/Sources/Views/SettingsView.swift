@@ -46,6 +46,18 @@ private struct ReadingSettings: View {
     var body: some View {
         Form {
             Section {
+                Picker("Engine", selection: $settings.engine) {
+                    ForEach(ReaderEngine.allCases) { engine in
+                        Text(engine.title).tag(engine)
+                    }
+                }
+            } footer: {
+                Text("The web engine renders the HTML produced by the Rust core. TextKit is the previous engine, kept while the two are compared.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Picker("Typeface", selection: $settings.fontFamily) {
                     ForEach(ReaderFontFamily.allCases) { family in
                         Text(family.title)

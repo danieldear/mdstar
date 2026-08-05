@@ -447,6 +447,13 @@ final class WorkspaceStore: ObservableObject {
         return "\(findIndex + 1) of \(findMatches.count)"
     }
 
+    /// The web engine finds and counts matches itself, so it reports results
+    /// back rather than the store recomputing them from the IR.
+    func reportFindResults(count: Int, index: Int) {
+        findMatches = count > 0 ? Array(repeating: "", count: count) : []
+        findIndex = max(0, index - 1)
+    }
+
     func rememberSearch(_ term: String) {
         let trimmed = term.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
