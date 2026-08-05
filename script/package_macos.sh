@@ -5,7 +5,7 @@
 #   - the native SwiftUI reader (CFBundleExecutable),
 #   - the `md` CLI binary, so `install.sh --link-app` works from one download,
 #   - the Rust FFI dylib,
-#   - the app icon and full document-type associations,
+#   - document-type associations (icon only when --icon is given),
 # and optionally a signed, notarized DMG.
 #
 # Usage:
@@ -13,7 +13,7 @@
 #
 # Options:
 #   --arch <universal|arm64|x86_64>  Target architecture (default: universal)
-#   --icon <path.icns>               Use a different app icon
+#   --icon <path.icns>               Embed an app icon (default: none)
 #   --dmg                            Also build a DMG for distribution
 #   --no-cli                         Skip embedding the `md` CLI binary
 #   --help                           Show this message
@@ -43,8 +43,11 @@ NATIVE_DIR="$ROOT_DIR/macos/MDStarNative"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
-# Override with --icon <path.icns> when the app gets artwork of its own.
-ICON_SOURCE="$ROOT_DIR/crates/mdstar-app/icons/icon.icns"
+# The app has no artwork of its own, so the bundle keeps the system's generic
+# icon — matching how it looks when run from Xcode. The Tauri app's icon is
+# deliberately not inherited; that is a different product's identity. Pass
+# --icon <path.icns> once MD Star has its own.
+ICON_SOURCE=""
 
 ARCH_MODE="universal"
 BUILD_DMG=false
@@ -287,11 +290,16 @@ if $INSTALL_APP; then
   cp -R "$APP_BUNDLE" "$INSTALLED"
   ok "Installed $INSTALLED"
 
+  # Finder and the Dock cache a bundle's icon by path, so replacing an app in
+  # place keeps showing the previous artwork until the timestamp changes.
+  touch "$INSTALLED"
+
   LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
   if [[ -x "$LSREGISTER" ]]; then
     "$LSREGISTER" -f "$INSTALLED" >/dev/null 2>&1 || true
     ok "Re-registered with LaunchServices"
   fi
+  info "Dock still showing the old icon? Run: killall Dock"
   info "Verify with: /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \\"
   info "  \"$INSTALLED/Contents/Info.plist\"   # expect $BUNDLE_ID"
 fi
