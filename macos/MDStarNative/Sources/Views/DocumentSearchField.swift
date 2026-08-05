@@ -33,7 +33,12 @@ struct DocumentSearchField: View {
                 onSubmit: { workspace.findNext() },
                 onSubmitBackwards: { workspace.findPrevious() },
                 onCancel: { workspace.dismissFind() },
-                onCommitRecent: { workspace.rememberSearch($0) }
+                onCommitRecent: { workspace.rememberSearch($0) },
+                onEndEditing: {
+                    // Collapse back to the toolbar icon once the field is done
+                    // and empty, instead of occupying the toolbar permanently.
+                    if !workspace.hasActiveSearch { workspace.dismissFind() }
+                }
             )
             .frame(width: 190)
 
@@ -67,6 +72,7 @@ private struct SearchFieldRepresentable: NSViewRepresentable {
     let onSubmitBackwards: () -> Void
     let onCancel: () -> Void
     let onCommitRecent: (String) -> Void
+    let onEndEditing: () -> Void
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = SubmitAwareSearchField()
@@ -80,6 +86,13 @@ private struct SearchFieldRepresentable: NSViewRepresentable {
         field.recentsAutosaveName = "mdstar.find.recents"
         field.maximumRecents = 6
         field.searchMenuTemplate = Self.recentsMenu()
+
+        // Take focus as the field appears so typing and Escape land here
+        // without an extra click.
+        DispatchQueue.main.async { [weak field] in
+            guard let field else { return }
+            field.window?.makeFirstResponder(field)
+        }
 
         return field
     }
@@ -123,6 +136,10 @@ private struct SearchFieldRepresentable: NSViewRepresentable {
 
         init(_ parent: SearchFieldRepresentable) {
             self.parent = parent
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            parent.onEndEditing()
         }
 
         func controlTextDidChange(_ notification: Notification) {

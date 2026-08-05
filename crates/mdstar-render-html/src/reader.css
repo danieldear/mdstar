@@ -1,0 +1,220 @@
+/* Structural stylesheet for rendered Markdown.
+ *
+ * Every colour and metric is a custom property. Frontends retheme the document
+ * by redefining the variables, not by restating rules — the macOS reader maps
+ * them onto the system appearance, accent colour and the user's font settings.
+ */
+
+:root {
+  --reader-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --reader-mono-family: ui-monospace, "SF Mono", Menlo, monospace;
+  --reader-font-size: 15px;
+  --reader-line-height: 1.65;
+  --reader-measure: 740px;
+
+  --reader-text: #1c1c1e;
+  --reader-secondary: #6b6b72;
+  --reader-tertiary: #97979e;
+  --reader-accent: #0a72f5;
+  --reader-hairline: rgba(0, 0, 0, 0.11);
+  --reader-fill: rgba(0, 0, 0, 0.045);
+  --reader-fill-strong: rgba(0, 0, 0, 0.075);
+  --reader-code-bg: rgba(0, 0, 0, 0.045);
+  --reader-mark: rgba(255, 214, 10, 0.45);
+  --reader-mark-active: rgba(255, 149, 0, 0.75);
+
+  --reader-syntax-comment: #3b7a2e;
+  --reader-syntax-string: #c4351f;
+  --reader-syntax-number: #1c00cf;
+  --reader-syntax-keyword: #a3268e;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  -webkit-text-size-adjust: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: var(--reader-font-family);
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
+  color: var(--reader-text);
+  /* Room for the toolbar above and comfortable run-out below. */
+  padding: 28px 40px 96px;
+}
+
+#reader-root {
+  max-width: var(--reader-measure);
+  margin: 0 auto;
+}
+
+/* Headings ---------------------------------------------------------------- */
+
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.25;
+  margin: 1.6em 0 0.5em;
+  font-weight: 600;
+  text-wrap: balance;
+  scroll-margin-top: 24px;
+}
+
+h1 { font-size: 2.05em; font-weight: 700; letter-spacing: -0.02em; margin-top: 0.2em; }
+h2 { font-size: 1.55em; letter-spacing: -0.01em; padding-bottom: 0.28em; border-bottom: 1px solid var(--reader-hairline); }
+h3 { font-size: 1.28em; }
+h4 { font-size: 1.12em; }
+h5 { font-size: 1em; }
+h6 { font-size: 0.92em; color: var(--reader-secondary); }
+
+/* Text -------------------------------------------------------------------- */
+
+p { margin: 0 0 1em; }
+
+a { color: var(--reader-accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+strong { font-weight: 650; }
+del { color: var(--reader-secondary); }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--reader-hairline);
+  margin: 2em 0;
+}
+
+blockquote {
+  margin: 0 0 1em;
+  padding: 0.1em 0 0.1em 1.1em;
+  border-left: 3px solid var(--reader-accent);
+  color: var(--reader-secondary);
+}
+
+blockquote > :last-child { margin-bottom: 0; }
+
+/* Lists ------------------------------------------------------------------- */
+
+ul, ol { margin: 0 0 1em; padding-left: 1.6em; }
+li { margin: 0.3em 0; }
+li > p { margin: 0 0 0.4em; }
+li > :last-child { margin-bottom: 0; }
+
+ul.task-list { list-style: none; padding-left: 0.2em; }
+
+.task-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+}
+
+.task-item > input[type="checkbox"] {
+  margin: 0;
+  flex: none;
+  accent-color: var(--reader-accent);
+  /* Nudge onto the text baseline; checkboxes align to the box otherwise. */
+  transform: translateY(0.12em);
+}
+
+.task-item > p { margin: 0; }
+.task-done { color: var(--reader-secondary); }
+
+/* Code -------------------------------------------------------------------- */
+
+code {
+  font-family: var(--reader-mono-family);
+  font-size: 0.875em;
+  background: var(--reader-code-bg);
+  padding: 0.13em 0.36em;
+  border-radius: 5px;
+  /* Keeps the chip tight to the glyphs instead of inflating the line box. */
+  line-height: inherit;
+  white-space: break-spaces;
+}
+
+pre {
+  margin: 0 0 1.2em;
+  padding: 14px 16px;
+  background: var(--reader-code-bg);
+  border: 1px solid var(--reader-hairline);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+pre > code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.875em;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+/* Tokens are applied by the frontend after render. */
+.tok-comment { color: var(--reader-syntax-comment); }
+.tok-string  { color: var(--reader-syntax-string); }
+.tok-number  { color: var(--reader-syntax-number); }
+.tok-keyword { color: var(--reader-syntax-keyword); }
+
+/* Tables ------------------------------------------------------------------ */
+
+table {
+  width: 100%;
+  margin: 0 0 1.2em;
+  border-collapse: collapse;
+  border: 1px solid var(--reader-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 0.95em;
+  display: table;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.55em 0.85em;
+  border-bottom: 1px solid var(--reader-hairline);
+}
+
+th { background: var(--reader-fill-strong); font-weight: 600; }
+tbody tr:nth-child(even) td { background: var(--reader-fill); }
+tbody tr:last-child td { border-bottom: none; }
+
+/* Media ------------------------------------------------------------------- */
+
+img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  display: block;
+  margin: 0.4em 0 1.2em;
+}
+
+/* Find and annotations ---------------------------------------------------- */
+
+mark.reader-find {
+  background: var(--reader-mark);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+mark.reader-find-current {
+  background: var(--reader-mark-active);
+  color: #1a1a1a;
+}
+
+mark.reader-annotation-highlight {
+  background: rgba(255, 214, 10, 0.38);
+  border-radius: 3px;
+}
+
+mark.reader-annotation-comment {
+  background: rgba(10, 114, 245, 0.18);
+  border-bottom: 2px solid rgba(10, 114, 245, 0.5);
+  border-radius: 3px;
+}
+
+/* Long tokens must not force the page to scroll sideways. */
+p, li, td, th, h1, h2, h3, h4, h5, h6 { overflow-wrap: anywhere; }

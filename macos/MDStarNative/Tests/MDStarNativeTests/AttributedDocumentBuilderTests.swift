@@ -120,7 +120,12 @@ final class AttributedDocumentBuilderTests: XCTestCase {
         let composed = compose([IR.list(items: [done, todo])])
         XCTAssertTrue(composed.string.contains("done item"))
         XCTAssertTrue(composed.string.contains("todo item"))
-        XCTAssertTrue(composed.string.contains("\u{2713}"), "completed task needs a check marker")
+        // Checkboxes are SF Symbol attachments, which appear in the string as
+        // the object-replacement character rather than a drawn glyph.
+        XCTAssertTrue(
+            composed.string.contains("\u{FFFC}"),
+            "task items need a checkbox attachment"
+        )
     }
 
     func testTableCellsRemainSelectableText() {

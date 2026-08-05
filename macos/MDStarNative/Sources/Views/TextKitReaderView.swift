@@ -24,11 +24,10 @@ struct TextKitReaderView: NSViewRepresentable {
         let textView = ReaderTextView()
         textView.isEditable = false
         textView.isSelectable = true
-        textView.drawsBackground = true
-        textView.backgroundColor = .textBackgroundColor
+        textView.drawsBackground = false
         textView.isRichText = true
         textView.usesFindBar = false
-        textView.textContainerInset = NSSize(width: 0, height: 28)
+        textView.textContainerInset = NSSize(width: 0, height: 20)
         textView.linkTextAttributes = [
             .foregroundColor: NSColor.linkColor,
             .cursor: NSCursor.pointingHand,
@@ -41,8 +40,10 @@ struct TextKitReaderView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+        scrollView.drawsBackground = false
+        // Content must run under the titlebar for the toolbar to blur it.
+        scrollView.automaticallyAdjustsContentInsets = true
+        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 24, right: 0)
         scrollView.documentView = textView
 
         context.coordinator.textView = textView
@@ -294,6 +295,50 @@ final class ReaderTextView: NSTextView {
     override func layout() {
         super.layout()
         applyReadingMeasure()
+    }
+
+    /// Block decoration is drawn here rather than as text attributes: a run
+    /// background paints only behind glyphs, which reads as a highlight, not as
+    /// a code card or a quotation rule.
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let composed, let layoutManager, let container = textContainer else { return }
+
+        let origin = textContainerOrigin
+        let cardFill = NSColor.labelColor.withAlphaComponent(0.055)
+        let cardStroke = NSColor.labelColor.withAlphaComponent(0.10)
+        let quoteBar = NSColor.controlAccentColor.withAlphaComponent(0.55)
+
+        for block in composed.blocks {
+            guard block.kind == "code" || block.kind == "blockquote"
+                    || block.kind == "frontmatter" || block.kind == "math" || block.kind == "html"
+            else { continue }
+
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: block.range, actualCharacterRange: nil)
+            var bounds = layoutManager.boundingRect(forGlyphRange: glyphRange, in: container)
+            bounds.origin.x += origin.x
+            bounds.origin.y += origin.y
+            guard bounds.intersects(rect) else { continue }
+
+            if block.kind == "blockquote" {
+                let bar = NSRect(x: bounds.minX - 14, y: bounds.minY - 2, width: 3, height: bounds.height + 4)
+                quoteBar.setFill()
+                NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
+            } else {
+                let card = NSRect(
+                    x: bounds.minX - 14,
+                    y: bounds.minY - 8,
+                    width: max(bounds.width + 28, container.size.width - 4),
+                    height: bounds.height + 16
+                )
+                let path = NSBezierPath(roundedRect: card, xRadius: 8, yRadius: 8)
+                cardFill.setFill()
+                path.fill()
+                cardStroke.setStroke()
+                path.lineWidth = 1
+                path.stroke()
+            }
+        }
     }
 
     private func applyReadingMeasure() {
