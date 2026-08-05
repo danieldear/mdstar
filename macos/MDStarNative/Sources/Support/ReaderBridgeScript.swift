@@ -30,11 +30,23 @@ enum ReaderBridgeScript {
         if (id !== lastHeading) { lastHeading = id; post('activeHeading', id); }
       }
 
+      let lastOffset = -1;
+      function reportScrollOffset() {
+        const offset = Math.max(0, Math.round(window.scrollY));
+        if (offset === lastOffset) return;
+        lastOffset = offset;
+        post('scrollOffset', offset);
+      }
+
       let scrollScheduled = false;
       window.addEventListener('scroll', () => {
         if (scrollScheduled) return;
         scrollScheduled = true;
-        requestAnimationFrame(() => { scrollScheduled = false; reportActiveHeading(); });
+        requestAnimationFrame(() => {
+          scrollScheduled = false;
+          reportActiveHeading();
+          reportScrollOffset();
+        });
       }, { passive: true });
 
       // ---- Links -----------------------------------------------------------
@@ -197,6 +209,7 @@ enum ReaderBridgeScript {
 
       window.__mdstar = bridge;
       reportActiveHeading();
+      reportScrollOffset();
     })();
     """
 }
