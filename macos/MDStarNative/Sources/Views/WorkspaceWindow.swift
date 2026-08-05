@@ -11,9 +11,8 @@ struct WorkspaceWindow: View {
     @ObservedObject var settings: ReaderSettings
     @ObservedObject var annotations: AnnotationStore
 
-    @State private var selection: SelectedText?
-    @State private var webSelection: WebSelection?
-    @State private var pendingComment: SelectedText?
+    @State private var selection: WebSelection?
+    @State private var pendingComment: WebSelection?
     @State private var commentDraft = ""
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -195,27 +194,10 @@ struct WorkspaceWindow: View {
 
     // MARK: - Annotations
 
-    var canAnnotate: Bool { activeSelection != nil && workspace.document != nil }
-
-    /// Normalises the two engines' selections into one shape. The web reader
-    /// reports offsets within a block; TextKit reports an absolute range.
-    private var activeSelection: SelectedText? {
-        if settings.engine == .web {
-            guard let webSelection else { return nil }
-            return SelectedText(
-                range: NSRange(
-                    location: webSelection.start,
-                    length: max(0, webSelection.end - webSelection.start)
-                ),
-                text: webSelection.text,
-                blockID: webSelection.blockID
-            )
-        }
-        return selection
-    }
+    var canAnnotate: Bool { selection != nil && workspace.document != nil }
 
     func addHighlight() {
-        guard let target = activeSelection, let document = workspace.document else { return }
+        guard let target = selection, let document = workspace.document else { return }
         annotations.add(
             kind: .highlight,
             range: target.range,
@@ -226,12 +208,12 @@ struct WorkspaceWindow: View {
     }
 
     func beginComment() {
-        guard let target = activeSelection, workspace.document != nil else { return }
+        guard selection != nil, workspace.document != nil else { return }
         commentDraft = ""
-        pendingComment = target
+        pendingComment = selection
     }
 
-    private func saveComment(for target: SelectedText) {
+    private func saveComment(for target: WebSelection) {
         if let document = workspace.document {
             annotations.add(
                 kind: .comment,
@@ -264,36 +246,21 @@ struct WorkspaceWindow: View {
     @ViewBuilder
     private var renderer: some View {
         if let document = workspace.document {
-            switch settings.engine {
-            case .web:
-                WebReaderView(
-                    document: document,
-                    fileURL: workspace.selectedURL,
-                    settings: settings,
-                    annotations: annotations,
-                    source: workspace.rawText,
-                    focusedBlockID: workspace.focusedBlockID,
-                    searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
-                    onOpenLink: openDocumentLink,
-                    onActiveHeadingChange: { workspace.setActiveHeading($0) },
-                    onSelectionChange: { webSelection = $0 },
-                    onFindResults: { count, index in
-                        workspace.reportFindResults(count: count, index: index)
-                    }
-                )
-            case .textKit:
-                TextKitReaderView(
-                    document: document,
-                    settings: settings,
-                    annotations: annotations,
-                    focusedBlockID: workspace.focusedBlockID,
-                    searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
-                    currentMatchID: workspace.currentMatchID,
-                    onOpenLink: openDocumentLink,
-                    onActiveHeadingChange: { workspace.setActiveHeading($0) },
-                    onSelectionChange: { selection = $0 }
-                )
-            }
+            WebReaderView(
+                document: document,
+                fileURL: workspace.selectedURL,
+                settings: settings,
+                annotations: annotations,
+                source: workspace.rawText,
+                focusedBlockID: workspace.focusedBlockID,
+                searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
+                onOpenLink: openDocumentLink,
+                onActiveHeadingChange: { workspace.setActiveHeading($0) },
+                onSelectionChange: { selection = $0 },
+                onFindResults: { count, index in
+                    workspace.reportFindResults(count: count, index: index)
+                }
+            )
         }
     }
 
