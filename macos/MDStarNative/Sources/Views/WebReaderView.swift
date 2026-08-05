@@ -49,7 +49,12 @@ struct WebReaderView: NSViewRepresentable {
             controller.add(context.coordinator, contentWorld: Self.bridgeWorld, name: handler)
         }
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = ReaderWebView(frame: .zero, configuration: configuration)
+        // The bridge reports whether a selection exists, which gates the
+        // annotation commands in the contextual menu.
+        webView.hasSelection = { [weak coordinator = context.coordinator] in
+            coordinator?.hasSelection ?? false
+        }
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
         webView.allowsMagnification = false
@@ -113,6 +118,9 @@ struct WebReaderView: NSViewRepresentable {
         weak var webView: WKWebView?
         var signature: ReaderSignature?
         var lastScrolledBlockID: String?
+        /// Mirrors the page's selection so the contextual menu can offer the
+        /// annotation commands only when something is selected.
+        private(set) var hasSelection = false
 
         private let htmlService = ReaderHTMLService()
         private var isLoaded = false
@@ -257,9 +265,11 @@ struct WebReaderView: NSViewRepresentable {
                       let blockID = payload["blockId"] as? String,
                       let start = payload["start"] as? Int,
                       let end = payload["end"] as? Int else {
+                    hasSelection = false
                     parent.onSelectionChange(nil)
                     return
                 }
+                hasSelection = !text.isEmpty
                 parent.onSelectionChange(
                     WebSelection(text: text, blockID: blockID, start: start, end: end)
                 )
@@ -319,6 +329,46 @@ struct WebReaderView: NSViewRepresentable {
             default: "application/octet-stream"
             }
         }
+    }
+}
+
+/// Web view that contributes the annotation commands to its contextual menu.
+///
+/// The TextKit surface offered these from the start; the web surface did not,
+/// so switching engines silently lost the ability to highlight or comment by
+/// right-clicking.
+final class ReaderWebView: WKWebView {
+    var hasSelection: () -> Bool = { false }
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        guard hasSelection() else { return }
+
+        menu.insertItem(.separator(), at: 0)
+
+        let comment = NSMenuItem(
+            title: "Add Comment\u{2026}",
+            action: #selector(addCommentFromMenu),
+            keyEquivalent: ""
+        )
+        comment.target = self
+        menu.insertItem(comment, at: 0)
+
+        let highlight = NSMenuItem(
+            title: "Highlight",
+            action: #selector(addHighlightFromMenu),
+            keyEquivalent: ""
+        )
+        highlight.target = self
+        menu.insertItem(highlight, at: 0)
+    }
+
+    @objc private func addHighlightFromMenu() {
+        NotificationCenter.default.post(name: .mdstarAddHighlight, object: nil)
+    }
+
+    @objc private func addCommentFromMenu() {
+        NotificationCenter.default.post(name: .mdstarAddComment, object: nil)
     }
 }
 

@@ -24,9 +24,15 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     private static func configure(_ window: NSWindow) {
-        guard !window.styleMask.contains(.fullSizeContentView) else { return }
-        window.styleMask.insert(.fullSizeContentView)
-        // The titlebar keeps its material; only the content extends beneath it.
+        // Only the style mask is one-time; the rest is re-asserted on every
+        // update because SwiftUI resets these as the toolbar rebuilds, and an
+        // early return here left the titlebar transparent — content showed
+        // through the toolbar sharply instead of being blurred by it.
+        if !window.styleMask.contains(.fullSizeContentView) {
+            window.styleMask.insert(.fullSizeContentView)
+        }
+        // A transparent titlebar has no material, so nothing blurs the content
+        // scrolling beneath it.
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
     }

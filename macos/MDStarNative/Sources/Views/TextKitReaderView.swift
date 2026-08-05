@@ -393,7 +393,3 @@ final class ReaderTextView: NSTextView {
     }
 }
 
-extension Notification.Name {
-    static let mdstarAddHighlight = Notification.Name("mdstarAddHighlight")
-    static let mdstarAddComment = Notification.Name("mdstarAddComment")
-}

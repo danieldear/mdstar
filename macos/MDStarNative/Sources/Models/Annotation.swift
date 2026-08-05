@@ -1,6 +1,13 @@
 import AppKit
 import Foundation
 
+extension Notification.Name {
+    /// Raised by whichever reading surface has a selection. The window owns the
+    /// selection state, so the surfaces only announce the intent.
+    static let mdstarAddHighlight = Notification.Name("mdstarAddHighlight")
+    static let mdstarAddComment = Notification.Name("mdstarAddComment")
+}
+
 /// A highlight or comment attached to a range of the rendered document.
 struct Annotation: Codable, Identifiable, Hashable, Sendable {
     enum Kind: String, Codable, Sendable {

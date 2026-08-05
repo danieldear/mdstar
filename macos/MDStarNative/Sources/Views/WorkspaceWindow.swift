@@ -36,6 +36,9 @@ struct WorkspaceWindow: View {
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar { toolbarContent }
+        // Without this the bar can render without its material, which is what
+        // made the document appear through it unblurred.
+        .toolbarBackground(.visible, for: .windowToolbar)
         .onReceive(NotificationCenter.default.publisher(for: .mdstarOpenedDocument)) { notification in
             if let url = notification.object as? URL {
                 navigation.record(url)
