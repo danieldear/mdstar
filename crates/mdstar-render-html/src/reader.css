@@ -48,8 +48,30 @@ body {
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
   color: var(--reader-text);
-  padding: 34px 40px 120px;
+  padding: 58px 40px 120px;
   background-color: var(--reader-bg);
+}
+
+/* The titlebar's material cannot sample a web view's content, so text passing
+   under the toolbar would otherwise be cut off sharply. This band is pinned to
+   the viewport and fades the page colour out over the same distance, so text
+   dissolves into the toolbar as it scrolls up rather than disappearing at an
+   edge. It never intercepts clicks. */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  pointer-events: none;
+  z-index: 10;
+  background: linear-gradient(
+    to bottom,
+    var(--reader-bg) 38%,
+    color-mix(in srgb, var(--reader-bg) 55%, transparent) 72%,
+    transparent
+  );
 }
 
 #reader-root {
