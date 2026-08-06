@@ -8,7 +8,12 @@ struct WorkspaceWindow: View {
     @ObservedObject var workspace: WorkspaceStore
     @ObservedObject var navigation: NavigationStore
     @ObservedObject var inspector: InspectorStore
+    @ObservedObject var settings: ReaderSettings
+    @ObservedObject var annotations: AnnotationStore
 
+    @State private var selection: SelectedText?
+    @State private var pendingComment: SelectedText?
+    @State private var commentDraft = ""
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -20,8 +25,13 @@ struct WorkspaceWindow: View {
                 .workspaceInspector(
                     isPresented: $inspector.isVisible,
                     inspector: inspector,
-                    workspace: workspace
+                    workspace: workspace,
+                    annotations: annotations
                 )
+                // The native reader has its own safe content inset and a
+                // titlebar material layer, so document text can scroll behind
+                // the toolbar and fade naturally rather than being clipped.
+                .ignoresSafeArea(.container, edges: .top)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar { toolbarContent }
@@ -31,6 +41,17 @@ struct WorkspaceWindow: View {
             }
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: acceptDrop)
+        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddHighlight)) { _ in addHighlight() }
+        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddComment)) { _ in beginComment() }
+        .sheet(item: $pendingComment) { target in
+            CommentComposer(
+                snippet: target.text,
+                note: $commentDraft,
+                onCancel: { pendingComment = nil; commentDraft = "" },
+                onSave: { saveComment(for: target) }
+            )
+        }
+        .background(WindowConfigurator())
         .task { workspace.restoreWorkspaceIfNeeded() }
     }
 
@@ -193,15 +214,60 @@ struct WorkspaceWindow: View {
     @ViewBuilder
     private var renderer: some View {
         if let document = workspace.document {
-            DocumentRenderer(
+            TextKitReaderView(
                 document: document,
+                settings: settings,
+                annotations: annotations,
                 focusedBlockID: workspace.focusedBlockID,
                 searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
                 currentMatchID: workspace.currentMatchID,
                 onOpenLink: openDocumentLink,
-                onActiveHeadingChange: { workspace.setActiveHeading($0) }
+                onActiveHeadingChange: { workspace.setActiveHeading($0) },
+                onSelectionChange: { selection = $0 }
             )
         }
+    }
+
+    // MARK: - Selection annotations
+
+    private func addHighlight() {
+        guard let selection, let document = workspace.document,
+              selection.documentID == document.documentID else { return }
+        annotations.add(
+            kind: .highlight,
+            range: selection.range,
+            snippet: selection.text,
+            blockID: selection.blockID,
+            segments: selection.segments,
+            documentID: document.documentID
+        )
+        inspector.selectedSection = .highlights
+        inspector.isVisible = true
+    }
+
+    private func beginComment() {
+        guard let selection, let document = workspace.document,
+              selection.documentID == document.documentID else { return }
+        commentDraft = ""
+        pendingComment = selection
+    }
+
+    private func saveComment(for selection: SelectedText) {
+        guard let document = workspace.document,
+              selection.documentID == document.documentID else { return }
+        annotations.add(
+            kind: .comment,
+            range: selection.range,
+            snippet: selection.text,
+            note: commentDraft,
+            blockID: selection.blockID,
+            segments: selection.segments,
+            documentID: document.documentID
+        )
+        pendingComment = nil
+        commentDraft = ""
+        inspector.selectedSection = .comments
+        inspector.isVisible = true
     }
 
     private func errorState(_ error: String) -> some View {
@@ -276,11 +342,12 @@ private extension View {
     func workspaceInspector(
         isPresented: Binding<Bool>,
         inspector: InspectorStore,
-        workspace: WorkspaceStore
+        workspace: WorkspaceStore,
+        annotations: AnnotationStore
     ) -> some View {
         if #available(macOS 14.0, *) {
             self.inspector(isPresented: isPresented) {
-                InspectorView(inspector: inspector, workspace: workspace)
+                InspectorView(inspector: inspector, workspace: workspace, annotations: annotations)
                     .inspectorColumnWidth(min: 250, ideal: 280, max: 340)
             }
         } else {
@@ -288,7 +355,7 @@ private extension View {
                 self
                 if isPresented.wrappedValue {
                     Divider()
-                    InspectorView(inspector: inspector, workspace: workspace)
+                    InspectorView(inspector: inspector, workspace: workspace, annotations: annotations)
                         .frame(minWidth: 250, idealWidth: 280, maxWidth: 340)
                 }
             }

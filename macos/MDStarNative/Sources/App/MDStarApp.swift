@@ -6,11 +6,19 @@ struct MDStarApp: App {
     @StateObject private var workspace = WorkspaceStore()
     @StateObject private var navigation = NavigationStore()
     @StateObject private var inspector = InspectorStore()
+    @StateObject private var settings = ReaderSettings()
+    @StateObject private var annotations = AnnotationStore()
     @AppStorage("mdstar.native.appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some Scene {
         WindowGroup("MD Star") {
-            WorkspaceWindow(workspace: workspace, navigation: navigation, inspector: inspector)
+            WorkspaceWindow(
+                workspace: workspace,
+                navigation: navigation,
+                inspector: inspector,
+                settings: settings,
+                annotations: annotations
+            )
                 .frame(minWidth: 880, minHeight: 620)
                 .onOpenURL { url in workspace.openFile(url, recordHistory: true) }
                 .preferredColorScheme(AppearancePreference(rawValue: appearance)?.colorScheme)
@@ -64,7 +72,7 @@ struct MDStarApp: App {
         }
 
         Settings {
-            SettingsView()
+            SettingsView(settings: settings)
         }
     }
 }

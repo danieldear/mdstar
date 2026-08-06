@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject var settings: ReaderSettings
     @AppStorage("mdstar.native.appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some View {
@@ -13,6 +14,22 @@ struct SettingsView: View {
             Text("MD Star uses macOS system materials and adapts to the selected appearance.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            Section("Reading") {
+                Picker("Typeface", selection: $settings.fontFamily) {
+                    ForEach(ReaderFontFamily.allCases) { family in
+                        Text(family.title).tag(family)
+                    }
+                }
+                LabeledContent("Text size") {
+                    HStack {
+                        Button(action: settings.zoomOut) { Image(systemName: "minus") }
+                            .disabled(!settings.canZoomOut)
+                        Text("\(Int(settings.fontSize)) pt").monospacedDigit()
+                        Button(action: settings.zoomIn) { Image(systemName: "plus") }
+                            .disabled(!settings.canZoomIn)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .padding(20)

@@ -5,12 +5,41 @@ import SwiftUI
 /// a single scan tags comments, strings, numbers, and a shared keyword set, which
 /// is enough to give code blocks Mud-like color without bundling a grammar engine.
 enum SyntaxHighlighter {
-    private enum Kind { case comment, string, number, keyword }
+    enum Kind { case comment, string, number, keyword }
 
-    static func highlight(_ code: String, language: String?) -> AttributedString {
-        var attributed = AttributedString(code)
+    /// AppKit variant used by the TextKit reader, which composes an
+    /// `NSAttributedString` rather than SwiftUI's `AttributedString`.
+    static func highlightForAppKit(_ code: String, language: String?, font: NSFont) -> NSAttributedString {
+        let output = NSMutableAttributedString(
+            string: code,
+            attributes: [.font: font, .foregroundColor: NSColor.labelColor]
+        )
+        for (start, end, kind) in spans(in: code, language: language) {
+            let nsRange = NSRange(location: start, length: max(0, end - start))
+            guard nsRange.location >= 0, nsRange.upperBound <= output.length else { continue }
+            output.addAttribute(.foregroundColor, value: nsColor(kind), range: nsRange)
+        }
+        return output
+    }
+
+    private static func nsColor(_ kind: Kind) -> NSColor {
+        switch kind {
+        case .comment: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .init(srgbRed: 0.50, green: 0.78, blue: 0.52, alpha: 1)
+                                                     : .init(srgbRed: 0.24, green: 0.51, blue: 0.25, alpha: 1) }
+        case .string:  NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .init(srgbRed: 1.00, green: 0.55, blue: 0.46, alpha: 1)
+                                                     : .init(srgbRed: 0.77, green: 0.20, blue: 0.15, alpha: 1) }
+        case .number:  NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .init(srgbRed: 0.70, green: 0.63, blue: 0.98, alpha: 1)
+                                                     : .init(srgbRed: 0.11, green: 0.20, blue: 0.80, alpha: 1) }
+        case .keyword: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .init(srgbRed: 1.00, green: 0.48, blue: 0.73, alpha: 1)
+                                                     : .init(srgbRed: 0.66, green: 0.15, blue: 0.55, alpha: 1) }
+        }
+    }
+
+    /// Shared scanner. Both the SwiftUI and AppKit renderers colour the same
+    /// spans, so the tokenizer lives in one place.
+    static func spans(in code: String, language: String?) -> [(Int, Int, Kind)] {
         let chars = Array(code)
-        guard !chars.isEmpty else { return attributed }
+        guard !chars.isEmpty else { return [] }
 
         let lineTokens = lineCommentTokens(for: language)
         let hasBlockComments = usesCBlockComments(language)
@@ -69,8 +98,14 @@ enum SyntaxHighlighter {
             i += 1
         }
 
-        for (start, end, kind) in spans {
-            guard start < end, end <= chars.count else { continue }
+        return spans
+    }
+
+    static func highlight(_ code: String, language: String?) -> AttributedString {
+        var attributed = AttributedString(code)
+        let count = code.count
+        for (start, end, kind) in spans(in: code, language: language) {
+            guard start < end, end <= count else { continue }
             let s = attributed.index(attributed.startIndex, offsetByCharacters: start)
             let e = attributed.index(s, offsetByCharacters: end - start)
             attributed[s..<e].foregroundColor = color(kind)
