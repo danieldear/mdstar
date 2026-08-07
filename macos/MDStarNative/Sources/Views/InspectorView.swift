@@ -9,14 +9,8 @@ struct InspectorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Inspector", selection: $inspector.selectedSection) {
-                ForEach(InspectorSection.allCases) { section in
-                    Image(systemName: section.systemImage).tag(section)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .padding(12)
+            inspectorSectionButtons
+                .padding(12)
 
             Divider()
 
@@ -30,6 +24,48 @@ struct InspectorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .accessibilityLabel("Document inspector")
+    }
+
+    /// A `Picker` using `.segmented` leaves AppKit in charge of its intrinsic
+    /// sizing, so modifiers on its label do not produce dependable hit areas.
+    /// Real buttons give every inspector section a consistent 32 pt target and
+    /// make the selected state explicit.
+    private var inspectorSectionButtons: some View {
+        HStack(spacing: 0) {
+            ForEach(InspectorSection.allCases, id: \.self) { section in
+                inspectorSectionButton(section)
+
+                if section != InspectorSection.allCases.last {
+                    Divider()
+                        .frame(height: 20)
+                }
+            }
+        }
+        .padding(4)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Inspector sections")
+    }
+
+    private func inspectorSectionButton(_ section: InspectorSection) -> some View {
+        let isSelected = inspector.selectedSection == section
+
+        return Button {
+            inspector.selectedSection = section
+        } label: {
+            Image(systemName: section.systemImage)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .background(
+            isSelected ? Color.accentColor : Color.clear,
+            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+        )
+        .help(section.rawValue)
+        .accessibilityLabel(section.rawValue)
+        .accessibilityValue(isSelected ? "Selected" : "")
     }
 
     // MARK: - Bookmarks
