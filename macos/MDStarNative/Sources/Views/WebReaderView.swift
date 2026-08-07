@@ -254,7 +254,7 @@ struct WebReaderView: NSViewRepresentable {
 
             case "openLink":
                 guard let href = message.body as? String else { return }
-                if let url = LinkResolver.resolvedURL(href, origin: parent.document.origin) {
+                if let url = InlineRenderer.resolvedURL(href, origin: parent.document.origin) {
                     parent.onOpenLink(url)
                 }
 
@@ -378,9 +378,4 @@ struct WebSelection: Equatable, Identifiable {
     let blockID: String
     let start: Int
     let end: Int
-
-    /// Offsets within the block, in the shape annotations are stored in.
-    var range: NSRange {
-        NSRange(location: start, length: max(0, end - start))
-    }
 }

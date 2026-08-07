@@ -52,6 +52,29 @@ body {
   background-color: var(--reader-bg);
 }
 
+/* The titlebar's material cannot sample a web view's content — a web view
+   composites out of process — so text scrolling under the toolbar would meet a
+   hard edge. The blur is therefore done inside the page: a band pinned to the
+   top of the viewport applies a backdrop filter, frosting the document behind
+   it exactly where the toolbar sits. It never intercepts clicks. */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 58px;
+  pointer-events: none;
+  z-index: 10;
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  backdrop-filter: blur(20px) saturate(1.6);
+  /* No fill: tinting the band makes it read as a panel laid over the page.
+     The mask fades the frosting out at its lower edge so it has no visible
+     boundary — otherwise the blur simply stops along a straight line. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+}
+
 /* Headings ---------------------------------------------------------------- */
 
 h1, h2, h3, h4, h5, h6 {
