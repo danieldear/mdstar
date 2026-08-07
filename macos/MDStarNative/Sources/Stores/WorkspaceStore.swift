@@ -24,6 +24,10 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var activeHeadingID: String?
     @Published private(set) var rawText: String = ""
     @Published private(set) var isDirty = false
+    /// Changes whenever the parsed document changes, including a live split
+    /// edit. The document ID deliberately remains stable for anchors, so UI
+    /// renderers need this separate identity to know their content changed.
+    @Published private(set) var documentRevision = 0
     /// URLs currently open in this window. Documents load on selection so the
     /// workspace remains responsive even with many large files open.
     @Published private(set) var openDocumentURLs: [URL] = []
@@ -182,7 +186,7 @@ final class WorkspaceStore: ObservableObject {
         selectedURL = nil
         selectedTabURL = nil
         openDocumentURLs = []
-        document = nil
+        replaceDocument(with: nil)
         rawText = ""
         bookmarks = []
         UserDefaults.standard.removeObject(forKey: foldersKey)
@@ -213,7 +217,7 @@ final class WorkspaceStore: ObservableObject {
             self.isLoading = false
             switch result {
             case .success(let loaded):
-                self.document = loaded.ir
+                self.replaceDocument(with: loaded.ir)
                 self.rawText = loaded.rawText
                 self.isDirty = false
                 self.activeHeadingID = loaded.ir.outline.first?.id
@@ -266,7 +270,7 @@ final class WorkspaceStore: ObservableObject {
         fileWatcher.stop()
         selectedURL = nil
         selectedTabURL = nil
-        document = nil
+        replaceDocument(with: nil)
         rawText = ""
         isDirty = false
         errorMessage = nil
@@ -344,7 +348,7 @@ final class WorkspaceStore: ObservableObject {
             guard let self, !Task.isCancelled, self.sourceRevision == revision else { return }
             switch result {
             case .success(let document):
-                self.document = document
+                self.replaceDocument(with: document)
                 self.activeHeadingID = document.outline.first?.id
                 if self.isFindPresented { self.recomputeFind() }
             case .failure(let error):
@@ -374,6 +378,11 @@ final class WorkspaceStore: ObservableObject {
         autoSaveTask?.cancel()
         sourceParseTask = nil
         autoSaveTask = nil
+    }
+
+    private func replaceDocument(with document: DocumentIR?) {
+        self.document = document
+        documentRevision &+= 1
     }
 
     // MARK: - Find

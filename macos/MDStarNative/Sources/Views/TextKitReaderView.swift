@@ -9,6 +9,9 @@ import SwiftUI
 /// block as its own `Text`, so every block was an isolated selection island.
 struct TextKitReaderView: NSViewRepresentable {
     let document: DocumentIR
+    /// Document IDs are stable across edits for navigation and annotations, so
+    /// they cannot signal that parsed content has changed. This revision does.
+    let documentRevision: Int
     @ObservedObject var settings: ReaderSettings
     @ObservedObject var annotations: AnnotationStore
 
@@ -72,6 +75,7 @@ struct TextKitReaderView: NSViewRepresentable {
         let signature = DocumentSignature(
             documentID: document.documentID,
             origin: document.origin,
+            documentRevision: documentRevision,
             fontSize: settings.fontSize,
             family: settings.fontFamily,
             lineSpacing: settings.lineSpacing,
@@ -105,6 +109,7 @@ struct TextKitReaderView: NSViewRepresentable {
     struct DocumentSignature: Equatable {
         let documentID: String
         let origin: String
+        let documentRevision: Int
         let fontSize: Double
         let family: ReaderFontFamily
         let lineSpacing: Double

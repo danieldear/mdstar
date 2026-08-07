@@ -288,6 +288,7 @@ struct WorkspaceWindow: View {
             case .textKit:
                 TextKitReaderView(
                     document: document,
+                    documentRevision: workspace.documentRevision,
                     settings: settings,
                     annotations: annotations,
                     focusedBlockID: workspace.focusedBlockID,
