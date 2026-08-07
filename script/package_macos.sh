@@ -5,7 +5,7 @@
 #   - the native SwiftUI reader (CFBundleExecutable),
 #   - the `md` CLI binary, so `install.sh --link-app` works from one download,
 #   - the Rust FFI dylib,
-#   - document-type associations (icon only when --icon is given),
+#   - branded app and Markdown document icons,
 # and optionally a signed, notarized DMG.
 #
 # Usage:
@@ -13,7 +13,7 @@
 #
 # Options:
 #   --arch <universal|arm64|x86_64>  Target architecture (default: universal)
-#   --icon <path.icns>               Embed an app icon (default: none)
+#   --icon <path.icns>               Override the bundled app/document icon
 #   --dmg                            Also build a DMG for distribution
 #   --no-cli                         Skip embedding the `md` CLI binary
 #   --help                           Show this message
@@ -43,11 +43,12 @@ NATIVE_DIR="$ROOT_DIR/macos/MDStarNative"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
-# The app has no artwork of its own, so the bundle keeps the system's generic
-# icon — matching how it looks when run from Xcode. The Tauri app's icon is
-# deliberately not inherited; that is a different product's identity. Pass
-# --icon <path.icns> once MD Star has its own.
-ICON_SOURCE=""
+# Keep a single canonical asset for the native bundle and Markdown documents.
+# Finder uses CFBundleTypeIconFile for files, while Dock/Finder use
+# CFBundleIconFile for the app. Reusing the branded rounded icon means both
+# surfaces keep the same MD Star identity instead of falling back to generic
+# square document artwork.
+ICON_SOURCE="${MDSTAR_APP_ICON:-$ROOT_DIR/crates/mdstar-app/icons/icon.icns}"
 
 ARCH_MODE="universal"
 BUILD_DMG=false
@@ -147,10 +148,10 @@ cp "$BUILT_APP_BINARY" "$CONTENTS/MacOS/$EXECUTABLE_NAME"
 cp "$STAGING/libmdstar_ffi.dylib" "$CONTENTS/Frameworks/"
 if $EMBED_CLI; then cp "$STAGING/md" "$CONTENTS/MacOS/md"; fi
 
-if [[ -n "$ICON_SOURCE" && -f "$ICON_SOURCE" ]]; then
+if [[ -f "$ICON_SOURCE" ]]; then
   cp "$ICON_SOURCE" "$CONTENTS/Resources/AppIcon.icns"
-  ok "App icon: $ICON_SOURCE"
-elif [[ -n "$ICON_SOURCE" ]]; then
+  ok "App and Markdown document icon: $ICON_SOURCE"
+else
   error "Icon not found: $ICON_SOURCE"
 fi
 
@@ -161,14 +162,6 @@ for target in "${RUST_TARGETS[@]}"; do
 done
 chmod +x "$CONTENTS/MacOS/$EXECUTABLE_NAME"
 if $EMBED_CLI; then chmod +x "$CONTENTS/MacOS/md"; fi
-
-# Referencing an icon that was never embedded leaves Finder showing a broken
-# entry rather than the generic app icon.
-if [[ -f "$CONTENTS/Resources/AppIcon.icns" ]]; then
-  ICON_PLIST_ENTRY='  <key>CFBundleIconFile</key><string>AppIcon</string>'
-else
-  ICON_PLIST_ENTRY=''
-fi
 
 cat >"$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -182,7 +175,7 @@ cat >"$CONTENTS/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
-$ICON_PLIST_ENTRY
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_SYSTEM_VERSION</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHumanReadableCopyright</key><string>Copyright © 2026 MD Star Contributors. MIT OR Apache-2.0.</string>
@@ -194,6 +187,7 @@ $ICON_PLIST_ENTRY
     <dict>
       <key>CFBundleTypeName</key><string>Markdown Document</string>
       <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>CFBundleTypeIconFile</key><string>AppIcon</string>
       <key>LSHandlerRank</key><string>Owner</string>
       <key>LSItemContentTypes</key>
       <array>
@@ -233,6 +227,13 @@ $ICON_PLIST_ENTRY
 </plist>
 PLIST
 ok "Info.plist (document types, version $VERSION)"
+
+[[ -s "$CONTENTS/Resources/AppIcon.icns" ]] || error "Bundled app icon is missing"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$CONTENTS/Info.plist")" == "AppIcon" ]] \
+  || error "Info.plist does not reference AppIcon"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes:0:CFBundleTypeIconFile' "$CONTENTS/Info.plist")" == "AppIcon" ]] \
+  || error "Markdown document type does not reference AppIcon"
+ok "Verified app and Markdown document icon metadata"
 
 # ── Sign ────────────────────────────────────────────────────────────────────
 section "Signing"

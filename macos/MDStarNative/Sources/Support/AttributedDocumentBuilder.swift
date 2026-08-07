@@ -233,7 +233,11 @@ struct AttributedDocumentBuilder {
         paragraph.paragraphSpacing = 12
         paragraph.firstLineHeadIndent = indent + 12
         paragraph.headIndent = indent + 12
-        paragraph.lineSpacing = 2
+        // Code and text diagrams depend on a uniform baseline grid. An
+        // additive line spacing creates visible gaps between box-drawing
+        // characters, so keep the font's natural line metrics intact.
+        paragraph.lineSpacing = 0
+        paragraph.lineHeightMultiple = 1
 
         let highlighted = NSMutableAttributedString(
             attributedString: SyntaxHighlighter.highlightForAppKit(code, language: language, font: settings.nsCodeFont)

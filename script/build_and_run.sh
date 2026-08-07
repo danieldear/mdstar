@@ -14,6 +14,7 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 RUST_LIBRARY="$ROOT_DIR/target/debug/libmdstar_ffi.dylib"
+APP_ICON_SOURCE="$ROOT_DIR/crates/mdstar-app/icons/icon.icns"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
@@ -26,9 +27,11 @@ pkill -x "$APP_NAME" >/dev/null 2>&1 || true
   swift build
   BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
   rm -rf "$APP_BUNDLE"
-  mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS"
+  mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS" "$APP_CONTENTS/Resources"
   cp "$BUILD_BINARY" "$APP_BINARY"
   cp "$RUST_LIBRARY" "$APP_FRAMEWORKS/"
+  [[ -f "$APP_ICON_SOURCE" ]] || { echo "missing app icon: $APP_ICON_SOURCE" >&2; exit 1; }
+  cp "$APP_ICON_SOURCE" "$APP_CONTENTS/Resources/AppIcon.icns"
   install_name_tool -id "@rpath/libmdstar_ffi.dylib" "$APP_FRAMEWORKS/libmdstar_ffi.dylib"
   install_name_tool -change "$ROOT_DIR/target/debug/deps/libmdstar_ffi.dylib" "@rpath/libmdstar_ffi.dylib" "$APP_BINARY"
   chmod +x "$APP_BINARY"
@@ -45,8 +48,23 @@ cat >"$APP_CONTENTS/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_SYSTEM_VERSION</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Markdown Document</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+        <string>public.markdown</string>
+      </array>
+    </dict>
+  </array>
 </dict></plist>
 PLIST
 

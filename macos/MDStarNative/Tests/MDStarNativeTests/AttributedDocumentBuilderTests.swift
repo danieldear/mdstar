@@ -139,6 +139,19 @@ final class AttributedDocumentBuilderTests: XCTestCase {
         XCTAssertTrue(composed.string.contains("Name"))
         XCTAssertTrue(composed.string.contains("alpha"))
     }
+
+    func testCodeBlocksUseTightNaturalLineMetricsForDiagrams() throws {
+        let composed = compose([
+            IR.block("code", id: "diagram", code: "┌──┐\n│  │\n└──┘")
+        ])
+        let range = try XCTUnwrap(composed.range(for: "diagram"))
+        let paragraph = try XCTUnwrap(
+            composed.text.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
+        )
+
+        XCTAssertEqual(paragraph.lineSpacing, 0, accuracy: 0.001)
+        XCTAssertEqual(paragraph.lineHeightMultiple, 1, accuracy: 0.001)
+    }
 }
 
 // MARK: - Annotation anchoring
