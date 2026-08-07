@@ -84,28 +84,31 @@ struct SidebarScrollPositionGuard: NSViewRepresentable {
         }
 
         /// SwiftUI places a `.background` sibling beside the List's internal
-        /// scroll view, not inside it, on some macOS versions. Looking only at
-        /// ancestors therefore works in plain view mode but misses the list
-        /// after split mode causes SwiftUI to rebuild the detail column. Find
-        /// the outline/table scroll view that overlaps this sidebar marker
-        /// instead.
+        /// scroll view, not inside it, on some macOS versions. In split mode
+        /// the marker can briefly have a zero-sized frame while the sidebar
+        /// scroll view is rebuilt, so geometric overlap is not reliable.
+        /// Instead, select the narrow leftmost scroll view in the window: the
+        /// only view matching that shape is the NavigationSplitView sidebar.
         private func sidebarScrollView(for marker: NSView) -> NSScrollView? {
             if let enclosing = enclosingScrollView(for: marker), isSourceList(enclosing) {
                 return enclosing
             }
 
             guard let window = marker.window, let contentView = window.contentView else { return nil }
-            let markerFrame = marker.convert(marker.bounds, to: nil)
             let candidates = descendantScrollViews(in: contentView)
-                .filter(isSourceList)
                 .filter { scrollView in
-                    let frame = scrollView.convert(scrollView.bounds, to: nil)
-                    return frame.intersects(markerFrame)
+                    let frame = scrollView.convert(scrollView.bounds, to: contentView)
+                    return frame.minX <= 12 && frame.width <= 420 && frame.height > 80
                 }
 
-            return candidates.min { lhs, rhs in
-                let lhsFrame = lhs.convert(lhs.bounds, to: nil)
-                let rhsFrame = rhs.convert(rhs.bounds, to: nil)
+            // Prefer an AppKit table/outline list when SwiftUI exposes one;
+            // fall back to the leftmost narrow scroll view for macOS releases
+            // that host List through a private container.
+            let sourceListCandidates = candidates.filter(isSourceList)
+            let matchingCandidates = sourceListCandidates.isEmpty ? candidates : sourceListCandidates
+            return matchingCandidates.min { lhs, rhs in
+                let lhsFrame = lhs.convert(lhs.bounds, to: contentView)
+                let rhsFrame = rhs.convert(rhs.bounds, to: contentView)
                 return lhsFrame.minX < rhsFrame.minX
             }
         }
