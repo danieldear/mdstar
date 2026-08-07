@@ -29,9 +29,9 @@ struct WorkspaceWindow: View {
                     workspace: workspace,
                     annotations: annotations
                 )
-                // The document runs beneath the toolbar; the stylesheet's top
-                // band and padding keep the first lines clear of it.
-                .ignoresSafeArea(.container, edges: .top)
+                // The document runs beneath the full toolbar/titlebar surface;
+                // the reader stylesheet supplies its own protected top inset.
+                .ignoresSafeArea(.all, edges: .top)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar { toolbarContent }
