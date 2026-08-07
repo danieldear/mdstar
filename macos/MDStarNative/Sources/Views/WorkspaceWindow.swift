@@ -41,7 +41,7 @@ struct WorkspaceWindow: View {
             }
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: acceptDrop)
-        .background(WindowConfigurator())
+        .background(WindowConfigurator(layoutRevision: workspace.viewMode == .split ? 1 : 0))
         .task { workspace.restoreWorkspaceIfNeeded() }
     }
 

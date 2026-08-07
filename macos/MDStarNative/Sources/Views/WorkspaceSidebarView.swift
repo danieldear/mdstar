@@ -32,10 +32,6 @@ struct WorkspaceSidebarView: View {
         .listStyle(.sidebar)
         .searchable(text: $search, placement: .sidebar, prompt: "Filter files and headings")
         .navigationTitle("MD Star")
-        // Prevent the AppKit-backed source list from retaining a horizontal
-        // clip offset after a trackpad gesture or layout change. Without this,
-        // the sidebar surface remains visible but its rows appear cut off.
-        .background(SidebarScrollPositionGuard())
     }
 
     // MARK: - Folders
