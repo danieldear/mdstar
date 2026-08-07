@@ -16,7 +16,10 @@ struct SidebarScrollPositionGuard: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSView {
-        let marker = NSView(frame: .zero)
+        let marker = MarkerView(frame: .zero)
+        marker.onLayout = { [weak coordinator = context.coordinator] marker in
+            coordinator?.install(around: marker)
+        }
         context.coordinator.install(around: marker)
         return marker
     }
@@ -36,7 +39,7 @@ struct SidebarScrollPositionGuard: NSViewRepresentable {
         private var retryCount = 0
 
         func install(around marker: NSView) {
-            guard let scrollView = enclosingScrollView(for: marker) else {
+            guard let scrollView = sidebarScrollView(for: marker) else {
                 // SwiftUI sometimes attaches the list's hosting hierarchy one
                 // layout pass after its background view. Retry briefly rather
                 // than leaving the sidebar unprotected in that race.
@@ -80,6 +83,33 @@ struct SidebarScrollPositionGuard: NSViewRepresentable {
             scrollView = nil
         }
 
+        /// SwiftUI places a `.background` sibling beside the List's internal
+        /// scroll view, not inside it, on some macOS versions. Looking only at
+        /// ancestors therefore works in plain view mode but misses the list
+        /// after split mode causes SwiftUI to rebuild the detail column. Find
+        /// the outline/table scroll view that overlaps this sidebar marker
+        /// instead.
+        private func sidebarScrollView(for marker: NSView) -> NSScrollView? {
+            if let enclosing = enclosingScrollView(for: marker), isSourceList(enclosing) {
+                return enclosing
+            }
+
+            guard let window = marker.window, let contentView = window.contentView else { return nil }
+            let markerFrame = marker.convert(marker.bounds, to: nil)
+            let candidates = descendantScrollViews(in: contentView)
+                .filter(isSourceList)
+                .filter { scrollView in
+                    let frame = scrollView.convert(scrollView.bounds, to: nil)
+                    return frame.intersects(markerFrame)
+                }
+
+            return candidates.min { lhs, rhs in
+                let lhsFrame = lhs.convert(lhs.bounds, to: nil)
+                let rhsFrame = rhs.convert(rhs.bounds, to: nil)
+                return lhsFrame.minX < rhsFrame.minX
+            }
+        }
+
         private func enclosingScrollView(for view: NSView) -> NSScrollView? {
             var current: NSView? = view.superview
             while let candidate = current {
@@ -91,6 +121,21 @@ struct SidebarScrollPositionGuard: NSViewRepresentable {
             return nil
         }
 
+        private func descendantScrollViews(in view: NSView) -> [NSScrollView] {
+            let children = view.subviews.flatMap(descendantScrollViews(in:))
+            return (view as? NSScrollView).map { [$0] + children } ?? children
+        }
+
+        private func isSourceList(_ scrollView: NSScrollView) -> Bool {
+            guard let documentView = scrollView.documentView else { return false }
+            return containsTableView(in: documentView)
+        }
+
+        private func containsTableView(in view: NSView) -> Bool {
+            if view is NSTableView { return true }
+            return view.subviews.contains(where: containsTableView(in:))
+        }
+
         private func pinToLeadingEdge() {
             guard let scrollView, let documentView = scrollView.documentView else { return }
             let clipView = scrollView.contentView
@@ -99,6 +144,20 @@ struct SidebarScrollPositionGuard: NSViewRepresentable {
 
             clipView.setBoundsOrigin(NSPoint(x: leadingX, y: clipView.bounds.minY))
             scrollView.reflectScrolledClipView(clipView)
+        }
+    }
+
+    private final class MarkerView: NSView {
+        var onLayout: ((NSView) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onLayout?(self)
+        }
+
+        override func layout() {
+            super.layout()
+            onLayout?(self)
         }
     }
 }
