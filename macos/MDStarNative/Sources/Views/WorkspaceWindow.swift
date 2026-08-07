@@ -301,48 +301,6 @@ struct WorkspaceWindow: View {
         }
     }
 
-    // MARK: - Selection annotations
-
-    private func addHighlight() {
-        guard let selection, let document = workspace.document,
-              selection.documentID == document.documentID else { return }
-        annotations.add(
-            kind: .highlight,
-            range: selection.range,
-            snippet: selection.text,
-            blockID: selection.blockID,
-            segments: selection.segments,
-            documentID: document.documentID
-        )
-        inspector.selectedSection = .highlights
-        inspector.isVisible = true
-    }
-
-    private func beginComment() {
-        guard let selection, let document = workspace.document,
-              selection.documentID == document.documentID else { return }
-        commentDraft = ""
-        pendingComment = selection
-    }
-
-    private func saveComment(for selection: SelectedText) {
-        guard let document = workspace.document,
-              selection.documentID == document.documentID else { return }
-        annotations.add(
-            kind: .comment,
-            range: selection.range,
-            snippet: selection.text,
-            note: commentDraft,
-            blockID: selection.blockID,
-            segments: selection.segments,
-            documentID: document.documentID
-        )
-        pendingComment = nil
-        commentDraft = ""
-        inspector.selectedSection = .comments
-        inspector.isVisible = true
-    }
-
     private func errorState(_ error: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
