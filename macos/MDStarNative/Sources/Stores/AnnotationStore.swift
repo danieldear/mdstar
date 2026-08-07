@@ -30,12 +30,10 @@ final class AnnotationStore: ObservableObject {
         snippet: String,
         note: String = "",
         blockID: String? = nil,
-        segments: [AnnotationSegment]? = nil,
         documentID: String
     ) -> Annotation {
         let annotation = Annotation(
-            kind: kind, range: range, snippet: snippet, note: note, blockID: blockID,
-            segments: segments
+            kind: kind, range: range, snippet: snippet, note: note, blockID: blockID
         )
         var existing = byDocument[documentID] ?? []
         existing.append(annotation)

@@ -9,6 +9,7 @@ final class ReaderSettingsTests: XCTestCase {
         // Start from a clean slate so persisted values from a previous run or
         // from the running app cannot influence assertions.
         for key in [
+            "mdstar.native.appearance",
             "mdstar.native.reader.fontFamily",
             "mdstar.native.reader.fontSize",
             "mdstar.native.reader.lineSpacing",
@@ -21,6 +22,7 @@ final class ReaderSettingsTests: XCTestCase {
 
     func testDefaultsAreReadable() {
         XCTAssertEqual(settings.fontSize, ReaderSettings.defaultFontSize)
+        XCTAssertEqual(settings.appearance, .system)
         XCTAssertEqual(settings.fontFamily, .system)
         XCTAssertGreaterThan(settings.contentWidth, 0)
     }
@@ -63,10 +65,12 @@ final class ReaderSettingsTests: XCTestCase {
     func testSettingsPersistAcrossInstances() {
         settings.fontSize = 19
         settings.fontFamily = .serif
+        settings.appearance = .dark
 
         let reloaded = ReaderSettings()
         XCTAssertEqual(reloaded.fontSize, 19)
         XCTAssertEqual(reloaded.fontFamily, .serif)
+        XCTAssertEqual(reloaded.appearance, .dark)
     }
 
     func testHeadingSizesDecreaseWithLevel() {

@@ -8,18 +8,7 @@ extension Notification.Name {
     static let mdstarAddComment = Notification.Name("mdstarAddComment")
 }
 
-/// One contiguous portion of an annotation. A selection can span headings,
-/// prose, lists and tables, so persistence records every affected semantic
-/// block rather than pretending the selection belongs to only its first block.
-struct AnnotationSegment: Codable, Hashable, Sendable {
-    let blockID: String
-    let location: Int
-    let length: Int
-
-    var range: NSRange { NSRange(location: location, length: length) }
-}
-
-/// A highlight or comment attached to one or more ranges of the rendered document.
+/// A highlight or comment attached to a range of the rendered document.
 struct Annotation: Codable, Identifiable, Hashable, Sendable {
     enum Kind: String, Codable, Sendable {
         case highlight
@@ -61,9 +50,6 @@ struct Annotation: Codable, Identifiable, Hashable, Sendable {
     /// Block the passage belongs to, so the reader can scroll to it with the
     /// same mechanism bookmarks and search use.
     let blockID: String?
-    /// New multi-block anchor. Optional so annotations saved by earlier builds
-    /// continue to decode and resolve through their legacy range and snippet.
-    let segments: [AnnotationSegment]?
 
     init(
         id: UUID = UUID(),
@@ -72,7 +58,6 @@ struct Annotation: Codable, Identifiable, Hashable, Sendable {
         snippet: String,
         note: String = "",
         blockID: String? = nil,
-        segments: [AnnotationSegment]? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -82,7 +67,6 @@ struct Annotation: Codable, Identifiable, Hashable, Sendable {
         self.snippet = snippet
         self.note = note
         self.blockID = blockID
-        self.segments = segments
         self.createdAt = createdAt
     }
 

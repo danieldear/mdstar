@@ -5,7 +5,7 @@
 #   - the native SwiftUI reader (CFBundleExecutable),
 #   - the `md` CLI binary, so `install.sh --link-app` works from one download,
 #   - the Rust FFI dylib,
-#   - the app icon and full document-type associations,
+#   - document-type associations (icon only when --icon is given),
 # and optionally a signed, notarized DMG.
 #
 # Usage:
@@ -13,6 +13,7 @@
 #
 # Options:
 #   --arch <universal|arm64|x86_64>  Target architecture (default: universal)
+#   --icon <path.icns>               Embed an app icon (default: none)
 #   --dmg                            Also build a DMG for distribution
 #   --no-cli                         Skip embedding the `md` CLI binary
 #   --help                           Show this message
@@ -42,7 +43,11 @@ NATIVE_DIR="$ROOT_DIR/macos/MDStarNative"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
-ICON_SOURCE="$ROOT_DIR/crates/mdstar-app/icons/icon.icns"
+# The app has no artwork of its own, so the bundle keeps the system's generic
+# icon — matching how it looks when run from Xcode. The Tauri app's icon is
+# deliberately not inherited; that is a different product's identity. Pass
+# --icon <path.icns> once MD Star has its own.
+ICON_SOURCE=""
 
 ARCH_MODE="universal"
 BUILD_DMG=false
@@ -61,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --dmg)     BUILD_DMG=true; shift ;;
     --no-cli)  EMBED_CLI=false; shift ;;
     --install) INSTALL_APP=true; shift ;;
+    --icon)    ICON_SOURCE="$2"; shift 2 ;;
     --help)    sed -n '/^# Usage/,/^set -e/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)         error "Unknown option: $1" ;;
   esac
@@ -141,11 +147,11 @@ cp "$BUILT_APP_BINARY" "$CONTENTS/MacOS/$EXECUTABLE_NAME"
 cp "$STAGING/libmdstar_ffi.dylib" "$CONTENTS/Frameworks/"
 if $EMBED_CLI; then cp "$STAGING/md" "$CONTENTS/MacOS/md"; fi
 
-if [[ -f "$ICON_SOURCE" ]]; then
+if [[ -n "$ICON_SOURCE" && -f "$ICON_SOURCE" ]]; then
   cp "$ICON_SOURCE" "$CONTENTS/Resources/AppIcon.icns"
-  ok "App icon"
-else
-  warn "Icon not found at $ICON_SOURCE — bundle will use the generic icon"
+  ok "App icon: $ICON_SOURCE"
+elif [[ -n "$ICON_SOURCE" ]]; then
+  error "Icon not found: $ICON_SOURCE"
 fi
 
 install_name_tool -id "@rpath/libmdstar_ffi.dylib" "$CONTENTS/Frameworks/libmdstar_ffi.dylib"
@@ -155,6 +161,14 @@ for target in "${RUST_TARGETS[@]}"; do
 done
 chmod +x "$CONTENTS/MacOS/$EXECUTABLE_NAME"
 if $EMBED_CLI; then chmod +x "$CONTENTS/MacOS/md"; fi
+
+# Referencing an icon that was never embedded leaves Finder showing a broken
+# entry rather than the generic app icon.
+if [[ -f "$CONTENTS/Resources/AppIcon.icns" ]]; then
+  ICON_PLIST_ENTRY='  <key>CFBundleIconFile</key><string>AppIcon</string>'
+else
+  ICON_PLIST_ENTRY=''
+fi
 
 cat >"$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -168,7 +182,7 @@ cat >"$CONTENTS/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
-  <key>CFBundleIconFile</key><string>AppIcon</string>
+$ICON_PLIST_ENTRY
   <key>LSMinimumSystemVersion</key><string>$MIN_SYSTEM_VERSION</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHumanReadableCopyright</key><string>Copyright © 2026 MD Star Contributors. MIT OR Apache-2.0.</string>
@@ -181,7 +195,6 @@ cat >"$CONTENTS/Info.plist" <<PLIST
       <key>CFBundleTypeName</key><string>Markdown Document</string>
       <key>CFBundleTypeRole</key><string>Viewer</string>
       <key>LSHandlerRank</key><string>Owner</string>
-      <key>CFBundleTypeIconFile</key><string>AppIcon</string>
       <key>LSItemContentTypes</key>
       <array>
         <string>net.daringfireball.markdown</string>
@@ -192,7 +205,6 @@ cat >"$CONTENTS/Info.plist" <<PLIST
       <key>CFBundleTypeName</key><string>Plain Text Document</string>
       <key>CFBundleTypeRole</key><string>Viewer</string>
       <key>LSHandlerRank</key><string>Alternate</string>
-      <key>CFBundleTypeIconFile</key><string>AppIcon</string>
       <key>LSItemContentTypes</key>
       <array>
         <string>public.plain-text</string>
@@ -220,7 +232,7 @@ cat >"$CONTENTS/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-ok "Info.plist (icon, document types, version $VERSION)"
+ok "Info.plist (document types, version $VERSION)"
 
 # ── Sign ────────────────────────────────────────────────────────────────────
 section "Signing"
@@ -278,11 +290,16 @@ if $INSTALL_APP; then
   cp -R "$APP_BUNDLE" "$INSTALLED"
   ok "Installed $INSTALLED"
 
+  # Finder and the Dock cache a bundle's icon by path, so replacing an app in
+  # place keeps showing the previous artwork until the timestamp changes.
+  touch "$INSTALLED"
+
   LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
   if [[ -x "$LSREGISTER" ]]; then
     "$LSREGISTER" -f "$INSTALLED" >/dev/null 2>&1 || true
     ok "Re-registered with LaunchServices"
   fi
+  info "Dock still showing the old icon? Run: killall Dock"
   info "Verify with: /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \\"
   info "  \"$INSTALLED/Contents/Info.plist\"   # expect $BUNDLE_ID"
 fi

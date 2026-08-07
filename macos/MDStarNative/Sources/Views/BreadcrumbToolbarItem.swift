@@ -28,6 +28,7 @@ struct BreadcrumbToolbarItem: View {
         .padding(.horizontal, 16)
         .font(.subheadline)
         .lineLimit(1)
+        .fixedSize()
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Current document path")
     }

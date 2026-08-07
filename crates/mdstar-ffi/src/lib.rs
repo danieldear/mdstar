@@ -12,7 +12,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use mdstar_core::{document_ir::parse_document_ir_with_diagnostics, parse_markdown};
-use mdstar_render_html::render_html;
+use mdstar_render_html::{base_stylesheet, render_document_ir, render_html};
 
 const MAX_DOCUMENT_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_WORKSPACE_DEPTH: usize = 32;
@@ -148,6 +148,61 @@ pub unsafe extern "C" fn mdstar_workspace_tree_json(root: *const c_char) -> *mut
             message: error.to_string(),
         })
     })
+}
+
+/// Read a local document and return sanitized semantic HTML for display.
+///
+/// The markup carries the IR's stable block identifiers so a frontend can map
+/// scroll position, search hits and selections back to semantic blocks. Raw
+/// HTML in the source is reduced to a presentational allowlist, because this
+/// output is rendered in a web view.
+///
+/// # Safety
+/// `path` must be a valid, null-terminated UTF-8 C string pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mdstar_document_html_from_file(path: *const c_char) -> *mut c_char {
+    ffi_string(|| {
+        let path = required_utf8(path, "path").map_err(|error| error.message)?;
+        let input =
+            fs::read_to_string(path).map_err(|error| format!("Cannot read {path}: {error}"))?;
+        let ir =
+            parse_document_ir_with_diagnostics(&input, path).map_err(|error| error.to_string())?;
+        Ok(render_document_ir(&ir))
+    })
+}
+
+/// Render in-memory Markdown to sanitized semantic HTML.
+///
+/// The file-based variant cannot show unsaved work, so an editor that wants a
+/// live preview renders its buffer through this instead. `origin` scopes the
+/// deterministic block identifiers and resolves relative links.
+///
+/// # Safety
+/// `input` and `origin` must be valid, null-terminated UTF-8 C string pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mdstar_document_html(
+    input: *const c_char,
+    origin: *const c_char,
+) -> *mut c_char {
+    ffi_string(|| {
+        let markdown = required_utf8(input, "input").map_err(|error| error.message)?;
+        let origin = required_utf8(origin, "origin").map_err(|error| error.message)?;
+        let ir = parse_document_ir_with_diagnostics(markdown, origin)
+            .map_err(|error| error.to_string())?;
+        Ok(render_document_ir(&ir))
+    })
+}
+
+/// Structural stylesheet shared by every HTML consumer.
+///
+/// Colours and metrics are custom properties, so a frontend themes the document
+/// by redefining variables rather than shipping its own copy of these rules.
+///
+/// Takes no arguments, so there is nothing for a caller to get wrong; the
+/// returned string must still be released with `mdstar_string_free`.
+#[unsafe(no_mangle)]
+pub extern "C" fn mdstar_reader_stylesheet() -> *mut c_char {
+    ffi_string(|| Ok(base_stylesheet().to_string()))
 }
 
 /// Free a string returned from any mdstar FFI function.

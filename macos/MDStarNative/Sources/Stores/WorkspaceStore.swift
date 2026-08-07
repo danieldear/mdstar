@@ -12,8 +12,9 @@ private struct LoadedDocument: Sendable {
 
 @MainActor
 final class WorkspaceStore: ObservableObject {
-    @Published private(set) var workspaceURL: URL?
-    @Published private(set) var fileTree: FileNode?
+    /// Root folders in the workspace, each rendered as its own tree. Multiple
+    /// roots let unrelated project directories sit side by side.
+    @Published private(set) var folders: [WorkspaceFolder] = []
     @Published private(set) var document: DocumentIR?
     @Published private(set) var selectedURL: URL?
     @Published private(set) var errorMessage: String?
@@ -41,7 +42,8 @@ final class WorkspaceStore: ObservableObject {
     private let service = RustDocumentService()
     private let bookmarkStore = SecurityScopedBookmarkStore()
     private let fileWatcher = FileWatcher()
-    private let workspaceKey = "mdstar.native.workspace.path"
+    private let directoryWatcher = DirectoryWatcher()
+    private let foldersKey = "mdstar.native.workspace.folders"
     private let selectedFileKey = "mdstar.native.workspace.selectedFile"
     private var scopedWorkspaceURL: URL?
     private var workspaceOperation = 0
@@ -51,25 +53,35 @@ final class WorkspaceStore: ObservableObject {
     private var autoSaveTask: Task<Void, Never>?
 
     init() {
-        let defaults = UserDefaults.standard
-        let path = defaults.string(forKey: workspaceKey) ?? ""
-        if !path.isEmpty { workspaceURL = URL(fileURLWithPath: path) }
+        let paths = UserDefaults.standard.stringArray(forKey: foldersKey) ?? []
+        folders = paths.map { WorkspaceFolder(url: URL(fileURLWithPath: $0)) }
+    }
+
+    /// Folder that contains the open document, used for breadcrumbs.
+    var workspaceURL: URL? {
+        guard let selectedURL else { return folders.first?.url }
+        let path = selectedURL.standardizedFileURL.path
+        return folders.first { path.hasPrefix($0.url.standardizedFileURL.path) }?.url
+            ?? folders.first?.url
     }
 
     func restoreWorkspaceIfNeeded() {
-        guard let workspaceURL else { return }
-        activateWorkspaceAccess(workspaceURL)
-        openWorkspace(workspaceURL, restoreSelection: true)
+        guard !folders.isEmpty else { return }
+        for folder in folders { activateWorkspaceAccess(folder.url) }
+        refreshFolders(restoreSelection: true)
+        startWatchingFolders()
     }
 
+    /// Prompts for one or more folders to add as workspace roots.
     func chooseWorkspace() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Open Workspace"
-        if panel.runModal() == .OK, let url = panel.url {
-            openWorkspace(url)
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add Folder"
+        panel.message = "Choose folders to add to the workspace"
+        if panel.runModal() == .OK {
+            addFolders(panel.urls)
         }
     }
 
@@ -84,51 +96,96 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    // MARK: - Workspace folders
+
+    func addFolders(_ urls: [URL]) {
+        var added = false
+        for url in urls {
+            let normalized = url.standardizedFileURL
+            guard !folders.contains(where: { $0.url == normalized }) else { continue }
+            activateWorkspaceAccess(normalized)
+            bookmarkStore.save(normalized)
+            folders.append(WorkspaceFolder(url: normalized))
+            expandedFileIDs.formUnion(loadExpandedIDs(for: normalized))
+            added = true
+        }
+        guard added else { return }
+        persistFolders()
+        refreshFolders()
+        startWatchingFolders()
+    }
+
+    func removeFolder(_ folder: WorkspaceFolder) {
+        folders.removeAll { $0.id == folder.id }
+        persistFolders()
+        startWatchingFolders()
+        if folders.isEmpty { directoryWatcher.stop() }
+    }
+
+    /// Legacy single-folder entry point, kept for `onOpenURL` and drops.
     func openWorkspace(_ url: URL, restoreSelection: Bool = false) {
-        workspaceURL = url.standardizedFileURL
-        activateWorkspaceAccess(workspaceURL!)
-        UserDefaults.standard.set(workspaceURL?.path, forKey: workspaceKey)
-        bookmarkStore.save(workspaceURL!)
-        expandedFileIDs = loadExpandedIDs(for: workspaceURL!)
-        isLoading = true
-        errorMessage = nil
+        addFolders([url])
+        if restoreSelection { restoreSelectionIfPossible() }
+    }
+
+    /// Rescans every root. Called on demand and whenever the watcher fires, so
+    /// files created outside the app appear without reopening the folder.
+    func refreshFolders(restoreSelection: Bool = false) {
+        guard !folders.isEmpty else { return }
         workspaceOperation += 1
         let operation = workspaceOperation
+        let roots = folders.map(\.url)
+
         Task { [weak self, service] in
-            let result: Result<FileNode, BackgroundFailure> = await Task.detached {
-                do { return .success(try service.workspaceTree(at: url)) }
-                catch { return .failure(BackgroundFailure(message: error.localizedDescription)) }
+            let scanned: [(URL, FileNode?)] = await Task.detached {
+                roots.map { url in (url, try? service.workspaceTree(at: url)) }
             }.value
             guard let self, self.workspaceOperation == operation else { return }
-            self.isLoading = false
-            switch result {
-            case .success(let tree):
-                self.fileTree = tree
-                if restoreSelection,
-                   let saved = UserDefaults.standard.string(forKey: self.selectedFileKey),
-                   FileManager.default.fileExists(atPath: saved) {
-                    self.openFile(URL(fileURLWithPath: saved), recordHistory: true)
-                }
-            case .failure(let error):
-                self.errorMessage = error.message
+            for (url, tree) in scanned {
+                guard let index = self.folders.firstIndex(where: { $0.url == url }) else { continue }
+                self.folders[index].tree = tree
+                self.folders[index].isUnavailable = tree == nil
             }
+            if restoreSelection { self.restoreSelectionIfPossible() }
+        }
+    }
+
+    private func restoreSelectionIfPossible() {
+        guard selectedURL == nil,
+              let saved = UserDefaults.standard.string(forKey: selectedFileKey),
+              FileManager.default.fileExists(atPath: saved) else { return }
+        openFile(URL(fileURLWithPath: saved), recordHistory: true)
+    }
+
+    private func persistFolders() {
+        UserDefaults.standard.set(folders.map(\.url.path), forKey: foldersKey)
+    }
+
+    private func startWatchingFolders() {
+        let roots = folders.map(\.url)
+        guard !roots.isEmpty else {
+            directoryWatcher.stop()
+            return
+        }
+        directoryWatcher.watch(roots) { [weak self] in
+            self?.refreshFolders()
         }
     }
 
     func closeWorkspace() {
         guard save() else { return }
         fileWatcher.stop()
+        directoryWatcher.stop()
         scopedWorkspaceURL?.stopAccessingSecurityScopedResource()
         scopedWorkspaceURL = nil
-        workspaceURL = nil
-        fileTree = nil
+        folders = []
         selectedURL = nil
         selectedTabURL = nil
         openDocumentURLs = []
         document = nil
         rawText = ""
         bookmarks = []
-        UserDefaults.standard.removeObject(forKey: workspaceKey)
+        UserDefaults.standard.removeObject(forKey: foldersKey)
         UserDefaults.standard.removeObject(forKey: selectedFileKey)
         bookmarkStore.remove()
         expandedFileIDs.removeAll()
@@ -376,6 +433,36 @@ final class WorkspaceStore: ObservableObject {
         focus(blockID: findMatches[findIndex])
     }
 
+    /// Recent search terms, newest first. Mirrors the NSSearchField recents
+    /// menu so history survives relaunches even if the field is rebuilt.
+    private let recentSearchesKey = "mdstar.native.find.recents"
+
+    var hasActiveSearch: Bool {
+        !findQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    var matchSummary: String {
+        guard hasActiveSearch else { return "" }
+        guard !findMatches.isEmpty else { return "No results" }
+        return "\(findIndex + 1) of \(findMatches.count)"
+    }
+
+    /// The web engine finds and counts matches itself, so it reports results
+    /// back rather than the store recomputing them from the IR.
+    func reportFindResults(count: Int, index: Int) {
+        findMatches = count > 0 ? Array(repeating: "", count: count) : []
+        findIndex = max(0, index - 1)
+    }
+
+    func rememberSearch(_ term: String) {
+        let trimmed = term.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        var recents = UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
+        recents.removeAll { $0.caseInsensitiveCompare(trimmed) == .orderedSame }
+        recents.insert(trimmed, at: 0)
+        UserDefaults.standard.set(Array(recents.prefix(6)), forKey: recentSearchesKey)
+    }
+
     var currentMatchID: String? {
         findMatches.indices.contains(findIndex) ? findMatches[findIndex] : nil
     }
@@ -438,8 +525,9 @@ final class WorkspaceStore: ObservableObject {
 
     func setExpanded(_ id: String, expanded: Bool) {
         if expanded { expandedFileIDs.insert(id) } else { expandedFileIDs.remove(id) }
-        guard let workspaceURL else { return }
-        UserDefaults.standard.set(Array(expandedFileIDs), forKey: expandedKey(for: workspaceURL))
+        for folder in folders {
+            UserDefaults.standard.set(Array(expandedFileIDs), forKey: expandedKey(for: folder.url))
+        }
     }
 
     func focus(blockID: String) {

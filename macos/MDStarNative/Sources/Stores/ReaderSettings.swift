@@ -33,6 +33,47 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
     var sample: String { "The quick brown fox" }
 }
 
+/// Which engine draws the document. Both are present while the web renderer is
+/// being brought up; the TextKit path is removed once it is settled.
+enum ReaderEngine: String, CaseIterable, Identifiable {
+    case web
+    case textKit
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .web: "Web (HTML + CSS)"
+        case .textKit: "TextKit"
+        }
+    }
+}
+
+/// Reader chrome theme. `system` follows the macOS appearance; the others pin it.
+enum AppearancePreference: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
+
 /// Typography and appearance preferences for the reader.
 ///
 /// Backed by `UserDefaults` through `@AppStorage`-equivalent manual storage so
@@ -45,10 +86,20 @@ final class ReaderSettings: ObservableObject {
     static let defaultFontSize: Double = 15
 
     private enum Key {
+        static let appearance = "mdstar.native.appearance"
         static let fontFamily = "mdstar.native.reader.fontFamily"
         static let fontSize = "mdstar.native.reader.fontSize"
         static let lineSpacing = "mdstar.native.reader.lineSpacing"
         static let contentWidth = "mdstar.native.reader.contentWidth"
+        static let engine = "mdstar.native.reader.engine"
+    }
+
+    @Published var engine: ReaderEngine {
+        didSet { UserDefaults.standard.set(engine.rawValue, forKey: Key.engine) }
+    }
+
+    @Published var appearance: AppearancePreference {
+        didSet { UserDefaults.standard.set(appearance.rawValue, forKey: Key.appearance) }
     }
 
     @Published var fontFamily: ReaderFontFamily {
@@ -79,6 +130,9 @@ final class ReaderSettings: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        engine = ReaderEngine(rawValue: defaults.string(forKey: Key.engine) ?? "") ?? .web
+        appearance = AppearancePreference(rawValue: defaults.string(forKey: Key.appearance) ?? "")
+            ?? .system
         fontFamily = ReaderFontFamily(rawValue: defaults.string(forKey: Key.fontFamily) ?? "")
             ?? .system
         let storedSize = defaults.double(forKey: Key.fontSize)

@@ -1,29 +1,36 @@
 import AppKit
 import SwiftUI
 
-/// Lets the SwiftUI detail surface extend through the unified titlebar.
+/// Puts the window into full-size content mode with a unified toolbar.
 ///
-/// Full-size content lets the system titlebar material blur the native reader
-/// beneath it. No custom titlebar overlay is required.
+/// This mirrors how Mud sets its document window up: the content view spans the
+/// whole window and the toolbar sits over it, rather than the content starting
+/// below the titlebar. The document's own top band, drawn by the stylesheet,
+/// provides the transition beneath the bar.
 struct WindowConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async { [weak view] in
-            if let window = view?.window { configure(window) }
+            guard let window = view?.window else { return }
+            Self.configure(window)
         }
         return view
     }
 
-    func updateNSView(_ view: NSView, context: Context) {
-        if let window = view.window { configure(window) }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let window = nsView.window else { return }
+        Self.configure(window)
     }
 
-    private func configure(_ window: NSWindow) {
-        window.styleMask.insert(.fullSizeContentView)
+    private static func configure(_ window: NSWindow) {
+        if !window.styleMask.contains(.fullSizeContentView) {
+            window.styleMask.insert(.fullSizeContentView)
+        }
         window.toolbarStyle = .unified
-        // Keep AppKit's own titlebar material. With a native NSTextView below
-        // it, this is the only layer that should create the fade/blur.
-        window.titlebarAppearsTransparent = false
-        window.titlebarSeparatorStyle = .none
+        // The titlebar draws nothing of its own: its material cannot sample the
+        // web view, so the page supplies the blur instead and the bar must let
+        // it show through. Re-asserted every update because SwiftUI resets this
+        // as the toolbar rebuilds.
+        window.titlebarAppearsTransparent = true
     }
 }

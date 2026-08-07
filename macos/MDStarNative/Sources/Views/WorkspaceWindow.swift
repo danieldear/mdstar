@@ -12,6 +12,7 @@ struct WorkspaceWindow: View {
     @ObservedObject var annotations: AnnotationStore
 
     @State private var selection: SelectedText?
+    @State private var webSelection: WebSelection?
     @State private var pendingComment: SelectedText?
     @State private var commentDraft = ""
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -28,9 +29,8 @@ struct WorkspaceWindow: View {
                     workspace: workspace,
                     annotations: annotations
                 )
-                // The native reader has its own safe content inset and a
-                // titlebar material layer, so document text can scroll behind
-                // the toolbar and fade naturally rather than being clipped.
+                // The document runs beneath the toolbar; the stylesheet's top
+                // band and padding keep the first lines clear of it.
                 .ignoresSafeArea(.container, edges: .top)
         }
         .navigationSplitViewStyle(.balanced)
@@ -41,16 +41,6 @@ struct WorkspaceWindow: View {
             }
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: acceptDrop)
-        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddHighlight)) { _ in addHighlight() }
-        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddComment)) { _ in beginComment() }
-        .sheet(item: $pendingComment) { target in
-            CommentComposer(
-                snippet: target.text,
-                note: $commentDraft,
-                onCancel: { pendingComment = nil; commentDraft = "" },
-                onSave: { saveComment(for: target) }
-            )
-        }
         .background(WindowConfigurator())
         .task { workspace.restoreWorkspaceIfNeeded() }
     }
@@ -76,27 +66,23 @@ struct WorkspaceWindow: View {
             .help("Forward")
         }
 
-        // Center: one document gets the active-file breadcrumb; multiple
-        // documents replace that center area with Safari-style breadcrumb tabs.
+        // Center: the breadcrumb always names the active document; a compact
+        // switcher appears beside it once more than one file is open.
         ToolbarItem(placement: .principal) {
-            if workspace.openDocumentURLs.count > 1 {
-                DocumentTabBar(
-                    urls: workspace.openDocumentURLs,
-                    workspaceURL: workspace.workspaceURL,
-                    selectedURL: workspace.selectedTabURL,
-                    select: workspace.selectTab,
-                    close: workspace.closeTab
-                )
-                // Do not cap the width: AppKit gives the principal toolbar
-                // item all space left between the leading and trailing groups.
-                // The strip itself handles excess tabs by scrolling.
-                .frame(minWidth: 300, idealWidth: 560, maxWidth:.infinity)
-                .padding(.horizontal, 16)
-            } else {
+            HStack(spacing: 6) {
                 BreadcrumbToolbarItem(
                     workspaceURL: workspace.workspaceURL,
                     fileURL: workspace.selectedURL
                 )
+
+                if workspace.openDocumentURLs.count > 1 {
+                    DocumentPickerToolbarItem(
+                        urls: workspace.openDocumentURLs,
+                        selectedURL: workspace.selectedTabURL,
+                        select: workspace.selectTab,
+                        close: workspace.closeTab
+                    )
+                }
             }
         }
 
@@ -107,11 +93,15 @@ struct WorkspaceWindow: View {
             }
             .help("Open File")
 
-            Button(action: toggleFind) {
-                Label("Find", systemImage: "magnifyingglass")
+            if workspace.isFindPresented {
+                DocumentSearchField(workspace: workspace)
+            } else {
+                Button(action: toggleFind) {
+                    Label("Find", systemImage: "magnifyingglass")
+                }
+                .disabled(workspace.document == nil)
+                .help("Find in Document (⌘F)")
             }
-            .disabled(workspace.document == nil)
-            .help("Find")
 
             Button(action: workspace.reload) {
                 Label("Reload", systemImage: "arrow.clockwise")
@@ -186,14 +176,78 @@ struct WorkspaceWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .bottom) {
-            if workspace.isFindPresented {
-                FindBar(workspace: workspace)
-                    .padding(.bottom, 22)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddHighlight)) { _ in
+            addHighlight()
         }
-        .animation(.easeOut(duration: 0.15), value: workspace.isFindPresented)
+        .onReceive(NotificationCenter.default.publisher(for: .mdstarAddComment)) { _ in
+            beginComment()
+        }
+        .sheet(item: $pendingComment) { target in
+            CommentComposer(
+                snippet: target.text,
+                note: $commentDraft,
+                onCancel: {
+                    pendingComment = nil
+                    commentDraft = ""
+                },
+                onSave: {
+                    saveComment(for: target)
+                }
+            )
+        }
+    }
+
+    // MARK: - Annotations
+
+    var canAnnotate: Bool { activeSelection != nil && workspace.document != nil }
+
+    /// Normalises the two engines' selections into one shape. The web reader
+    /// reports offsets within a block; TextKit reports an absolute range.
+    private var activeSelection: SelectedText? {
+        if settings.engine == .web {
+            guard let webSelection else { return nil }
+            return SelectedText(
+                range: NSRange(
+                    location: webSelection.start,
+                    length: max(0, webSelection.end - webSelection.start)
+                ),
+                text: webSelection.text,
+                blockID: webSelection.blockID
+            )
+        }
+        return selection
+    }
+
+    func addHighlight() {
+        guard let target = activeSelection, let document = workspace.document else { return }
+        annotations.add(
+            kind: .highlight,
+            range: target.range,
+            snippet: target.text,
+            blockID: target.blockID,
+            documentID: document.documentID
+        )
+    }
+
+    func beginComment() {
+        guard let target = activeSelection, workspace.document != nil else { return }
+        commentDraft = ""
+        pendingComment = target
+    }
+
+    private func saveComment(for target: SelectedText) {
+        if let document = workspace.document {
+            annotations.add(
+                kind: .comment,
+                range: target.range,
+                snippet: target.text,
+                note: commentDraft,
+                blockID: target.blockID,
+                documentID: document.documentID
+            )
+        }
+        pendingComment = nil
+        commentDraft = ""
     }
 
     @ViewBuilder
@@ -214,60 +268,37 @@ struct WorkspaceWindow: View {
     @ViewBuilder
     private var renderer: some View {
         if let document = workspace.document {
-            TextKitReaderView(
-                document: document,
-                settings: settings,
-                annotations: annotations,
-                focusedBlockID: workspace.focusedBlockID,
-                searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
-                currentMatchID: workspace.currentMatchID,
-                onOpenLink: openDocumentLink,
-                onActiveHeadingChange: { workspace.setActiveHeading($0) },
-                onSelectionChange: { selection = $0 }
-            )
+            switch settings.engine {
+            case .web:
+                WebReaderView(
+                    document: document,
+                    fileURL: workspace.selectedURL,
+                    settings: settings,
+                    annotations: annotations,
+                    source: workspace.rawText,
+                    focusedBlockID: workspace.focusedBlockID,
+                    searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
+                    onOpenLink: openDocumentLink,
+                    onActiveHeadingChange: { workspace.setActiveHeading($0) },
+                    onSelectionChange: { webSelection = $0 },
+                    onFindResults: { count, index in
+                        workspace.reportFindResults(count: count, index: index)
+                    }
+                )
+            case .textKit:
+                TextKitReaderView(
+                    document: document,
+                    settings: settings,
+                    annotations: annotations,
+                    focusedBlockID: workspace.focusedBlockID,
+                    searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
+                    currentMatchID: workspace.currentMatchID,
+                    onOpenLink: openDocumentLink,
+                    onActiveHeadingChange: { workspace.setActiveHeading($0) },
+                    onSelectionChange: { selection = $0 }
+                )
+            }
         }
-    }
-
-    // MARK: - Selection annotations
-
-    private func addHighlight() {
-        guard let selection, let document = workspace.document,
-              selection.documentID == document.documentID else { return }
-        annotations.add(
-            kind: .highlight,
-            range: selection.range,
-            snippet: selection.text,
-            blockID: selection.blockID,
-            segments: selection.segments,
-            documentID: document.documentID
-        )
-        inspector.selectedSection = .highlights
-        inspector.isVisible = true
-    }
-
-    private func beginComment() {
-        guard let selection, let document = workspace.document,
-              selection.documentID == document.documentID else { return }
-        commentDraft = ""
-        pendingComment = selection
-    }
-
-    private func saveComment(for selection: SelectedText) {
-        guard let document = workspace.document,
-              selection.documentID == document.documentID else { return }
-        annotations.add(
-            kind: .comment,
-            range: selection.range,
-            snippet: selection.text,
-            note: commentDraft,
-            blockID: selection.blockID,
-            segments: selection.segments,
-            documentID: document.documentID
-        )
-        pendingComment = nil
-        commentDraft = ""
-        inspector.selectedSection = .comments
-        inspector.isVisible = true
     }
 
     private func errorState(_ error: String) -> some View {

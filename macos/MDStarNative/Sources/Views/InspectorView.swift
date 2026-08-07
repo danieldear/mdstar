@@ -103,7 +103,7 @@ struct InspectorView: View {
 
     /// Scrolls the reader to the annotated passage.
     private func reveal(_ annotation: Annotation) {
-        guard let blockID = annotation.segments?.first?.blockID ?? annotation.blockID else { return }
+        guard let blockID = annotation.blockID else { return }
         workspace.focus(blockID: blockID)
     }
 

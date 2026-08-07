@@ -9,6 +9,9 @@ char *mdstar_render_html(const char *input);
 char *mdstar_document_ir_json(const char *input, const char *origin);
 char *mdstar_document_ir_from_file_json(const char *path);
 char *mdstar_workspace_tree_json(const char *root);
+char *mdstar_document_html_from_file(const char *path);
+char *mdstar_document_html(const char *input, const char *origin);
+char *mdstar_reader_stylesheet(void);
 void mdstar_string_free(char *pointer);
 void markdown_string_free(char *pointer);
 

@@ -41,8 +41,7 @@ struct TextKitReaderView: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
-        // This reader deliberately leaves titlebar geometry to the confirmed
-        // v0.1 SwiftUI window shell. It is only the document surface.
+        // Content must run under the titlebar for the toolbar to blur it.
         scrollView.automaticallyAdjustsContentInsets = true
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 24, right: 0)
         scrollView.documentView = textView
@@ -73,7 +72,6 @@ struct TextKitReaderView: NSViewRepresentable {
         let signature = DocumentSignature(
             documentID: document.documentID,
             origin: document.origin,
-            contentFingerprint: document.blocks.map { "\($0.id):\($0.searchableText)" }.joined(separator: "\u{1F}"),
             fontSize: settings.fontSize,
             family: settings.fontFamily,
             lineSpacing: settings.lineSpacing,
@@ -107,7 +105,6 @@ struct TextKitReaderView: NSViewRepresentable {
     struct DocumentSignature: Equatable {
         let documentID: String
         let origin: String
-        let contentFingerprint: String
         let fontSize: Double
         let family: ReaderFontFamily
         let lineSpacing: Double
@@ -203,14 +200,12 @@ struct TextKitReaderView: NSViewRepresentable {
             layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: full)
 
             for annotation in annotations {
-                let ranges = annotation.segments?.compactMap(composed.range(for:))
-                    ?? [annotation.resolvedRange(in: composed.string)]
-                for range in ranges where range.location != NSNotFound && range.upperBound <= composed.text.length {
+                let range = annotation.resolvedRange(in: composed.string)
+                guard range.location != NSNotFound, range.upperBound <= composed.text.length else { continue }
                 layoutManager.addTemporaryAttributes(
                     [.backgroundColor: annotation.kind.highlightColor],
                     forCharacterRange: range
                 )
-                }
             }
 
             let needle = query.trimmingCharacters(in: .whitespaces)
@@ -268,26 +263,21 @@ struct TextKitReaderView: NSViewRepresentable {
             let text = (composed.string as NSString).substring(with: range)
             parent.onSelectionChange(
                 SelectedText(
-                    documentID: parent.document.documentID,
                     range: range,
                     text: text,
-                    blockID: composed.blockID(containing: range.location),
-                    segments: composed.annotationSegments(for: range)
+                    blockID: composed.blockID(containing: range.location)
                 )
             )
         }
     }
 }
 
-
 /// A text selection reported back to SwiftUI.
 struct SelectedText: Equatable, Identifiable {
-    var id: String { "\(documentID)-\(range.location)-\(range.length)" }
-    let documentID: String
+    var id: String { "\(range.location)-\(range.length)" }
     let range: NSRange
     let text: String
     let blockID: String?
-    let segments: [AnnotationSegment]
 }
 
 /// Text view that centres its content to the reading measure and exposes

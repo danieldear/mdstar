@@ -139,23 +139,6 @@ final class AttributedDocumentBuilderTests: XCTestCase {
         XCTAssertTrue(composed.string.contains("Name"))
         XCTAssertTrue(composed.string.contains("alpha"))
     }
-
-    func testMultiBlockSelectionProducesOrderedAnnotationSegments() {
-        let composed = compose([
-            IR.heading("Title", level: 1),
-            IR.paragraph("First section."),
-            IR.paragraph("Second section."),
-        ])
-        let start = composed.blocks[1].range.location + 6
-        let end = composed.blocks[2].range.location + 6
-        let segments = composed.annotationSegments(
-            for: NSRange(location: start, length: end - start)
-        )
-
-        XCTAssertEqual(segments.map(\.blockID), [composed.blocks[1].id, composed.blocks[2].id])
-        XCTAssertEqual(segments.map(\.length).reduce(0, +), end - start)
-        XCTAssertEqual(composed.range(for: segments[0]), segments[0].range)
-    }
 }
 
 // MARK: - Annotation anchoring
@@ -206,29 +189,5 @@ final class AnnotationAnchoringTests: XCTestCase {
         XCTAssertEqual(decoded.note, "worth revisiting")
         XCTAssertEqual(decoded.blockID, "block-1")
         XCTAssertEqual(decoded.range, annotation.range)
-    }
-
-    func testLegacyAnnotationWithoutSegmentsStillDecodes() throws {
-        let legacy = """
-        {"id":"11111111-1111-1111-1111-111111111111","kind":"highlight","location":4,"length":5,"snippet":"quick","note":"","createdAt":0,"blockID":"block-1"}
-        """.data(using: .utf8)!
-        let decoded = try JSONDecoder().decode(Annotation.self, from: legacy)
-        XCTAssertNil(decoded.segments)
-        XCTAssertEqual(decoded.resolvedRange(in: "The quick brown fox"), NSRange(location: 4, length: 5))
-    }
-
-    func testSegmentedAnnotationRoundTripsThroughJSON() throws {
-        let annotation = Annotation(
-            kind: .comment,
-            range: NSRange(location: 2, length: 12),
-            snippet: "spans blocks",
-            blockID: "first",
-            segments: [
-                AnnotationSegment(blockID: "first", location: 2, length: 5),
-                AnnotationSegment(blockID: "second", location: 7, length: 7),
-            ]
-        )
-        let decoded = try JSONDecoder().decode(Annotation.self, from: JSONEncoder().encode(annotation))
-        XCTAssertEqual(decoded.segments, annotation.segments)
     }
 }

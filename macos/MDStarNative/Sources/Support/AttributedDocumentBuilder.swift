@@ -25,29 +25,6 @@ struct ComposedDocument {
     func blockID(containing location: Int) -> String? {
         blocks.last { $0.range.location <= location }?.id
     }
-
-    /// Break a text selection into the portions belonging to each semantic
-    /// block. This gives annotations durable navigation anchors while keeping a
-    /// continuous native text selection for Copy.
-    func annotationSegments(for selection: NSRange) -> [AnnotationSegment] {
-        guard selection.length > 0 else { return [] }
-        return blocks.compactMap { block in
-            let intersection = NSIntersectionRange(selection, block.range)
-            guard intersection.length > 0 else { return nil }
-            return AnnotationSegment(
-                blockID: block.id,
-                location: intersection.location,
-                length: intersection.length
-            )
-        }
-    }
-
-    func range(for segment: AnnotationSegment) -> NSRange? {
-        guard range(for: segment.blockID) != nil,
-              segment.range.location != NSNotFound,
-              segment.range.upperBound <= text.length else { return nil }
-        return segment.range
-    }
 }
 
 /// Attribute key marking which block a run belongs to. Lets the view resolve a

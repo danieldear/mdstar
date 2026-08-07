@@ -8,7 +8,6 @@ struct MDStarApp: App {
     @StateObject private var inspector = InspectorStore()
     @StateObject private var settings = ReaderSettings()
     @StateObject private var annotations = AnnotationStore()
-    @AppStorage("mdstar.native.appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some Scene {
         WindowGroup("MD Star") {
@@ -19,9 +18,9 @@ struct MDStarApp: App {
                 settings: settings,
                 annotations: annotations
             )
-                .frame(minWidth: 880, minHeight: 620)
-                .onOpenURL { url in workspace.openFile(url, recordHistory: true) }
-                .preferredColorScheme(AppearancePreference(rawValue: appearance)?.colorScheme)
+            .frame(minWidth: 880, minHeight: 620)
+            .onOpenURL { url in workspace.openFile(url, recordHistory: true) }
+            .preferredColorScheme(settings.appearance.colorScheme)
         }
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
@@ -50,6 +49,19 @@ struct MDStarApp: App {
                 Button("Find in Document…") { if workspace.document != nil { workspace.presentFind() } }
                     .keyboardShortcut("f", modifiers: .command)
                     .disabled(workspace.document == nil)
+                Divider()
+                // Posted rather than called directly: the selection lives in the
+                // reader, and the window observes these to act on it.
+                Button("Highlight Selection") {
+                    NotificationCenter.default.post(name: .mdstarAddHighlight, object: nil)
+                }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .disabled(workspace.document == nil)
+                Button("Add Comment…") {
+                    NotificationCenter.default.post(name: .mdstarAddComment, object: nil)
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+                .disabled(workspace.document == nil)
             }
             CommandMenu("View") {
                 Picker("Reading Mode", selection: $workspace.viewMode) {
@@ -63,6 +75,16 @@ struct MDStarApp: App {
                 Button("Toggle Source") { if workspace.document != nil { workspace.toggleSourcePreview() } }
                     .keyboardShortcut("/", modifiers: .command)
                     .disabled(workspace.document == nil)
+                Divider()
+                // Standard macOS text-zoom shortcuts, as in Safari and Preview.
+                Button("Bigger Text") { settings.zoomIn() }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .disabled(!settings.canZoomIn)
+                Button("Smaller Text") { settings.zoomOut() }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(!settings.canZoomOut)
+                Button("Actual Size") { settings.resetZoom() }
+                    .keyboardShortcut("0", modifiers: .command)
                 Divider()
                 Button(inspector.isVisible ? "Hide Inspector" : "Show Inspector") {
                     inspector.isVisible.toggle()

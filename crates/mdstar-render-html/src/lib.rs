@@ -1,3 +1,10 @@
+pub mod document_ir;
+pub mod highlight;
+pub mod sanitize;
+
+pub use document_ir::{base_stylesheet, render_document_ir};
+pub use sanitize::sanitize_html;
+
 use mdstar_core::{Block, Inline, ListItem};
 
 pub fn render_html(doc: &mdstar_core::Document) -> String {
@@ -88,7 +95,7 @@ fn render_block(block: &Block, out: &mut String) {
 
         Block::ThematicBreak => out.push_str("<hr />\n"),
 
-        Block::Html(html) => out.push_str(html),
+        Block::Html(html) => out.push_str(&sanitize::sanitize_html(html)),
 
         Block::Math(math) => {
             out.push_str(&format!(
@@ -159,7 +166,7 @@ fn render_inline(inline: &Inline) -> String {
                 title_attr
             )
         }
-        Inline::Html(html) => html.clone(),
+        Inline::Html(html) => sanitize::sanitize_html(html),
         Inline::SoftBreak => "\n".to_string(),
         Inline::HardBreak => "<br />\n".to_string(),
     }
