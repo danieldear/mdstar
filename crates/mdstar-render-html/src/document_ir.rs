@@ -6,7 +6,11 @@
 //! block identifiers. Frontends need those to map a scroll position, a search
 //! hit, or a text selection back to a semantic block without re-parsing.
 
-use mdstar_core::document_ir::{BlockIr, DocumentIr, InlineIr, ListItemIr};
+use latex2mathml::{DisplayStyle, latex_to_mathml};
+use mdstar_core::{
+    document_ir::{BlockIr, DocumentIr, InlineIr, ListItemIr},
+    expand_emoji_text,
+};
 
 /// Render a document to a fragment of semantic HTML.
 ///
@@ -113,9 +117,10 @@ fn render_block(block: &BlockIr, out: &mut String) {
 
         "thematic_break" => out.push_str(&format!("<hr id=\"{id}\" />\n")),
 
-        "math" => out.push_str(&format!(
-            "<div id=\"{id}\" class=\"math math-display\">\\[{}\\]</div>\n",
-            escape_html(block.raw.as_deref().unwrap_or_default())
+        "math" => out.push_str(&render_math(
+            block.raw.as_deref().unwrap_or_default(),
+            DisplayStyle::Block,
+            Some(&id),
         )),
 
         // Documents are untrusted input and this markup ends up in a web
@@ -159,15 +164,15 @@ fn render_inlines(inlines: &[InlineIr]) -> String {
 fn render_inline(inline: &InlineIr) -> String {
     let text = inline.text.as_deref().unwrap_or_default();
     match inline.kind.as_str() {
-        "text" => escape_html(text),
+        // Emoji expansion happens after parsing, on text nodes only. That keeps
+        // the parser's byte ranges intact for editor/preview synchronization
+        // and avoids rewriting code spans, code fences, or link destinations.
+        "text" => escape_html(&expand_emoji_text(text)),
         "strong" => format!("<strong>{}</strong>", render_inlines(&inline.children)),
         "emphasis" => format!("<em>{}</em>", render_inlines(&inline.children)),
         "delete" => format!("<del>{}</del>", render_inlines(&inline.children)),
         "code" => format!("<code>{}</code>", escape_html(text)),
-        "math" => format!(
-            "<span class=\"math math-inline\">\\({}\\)</span>",
-            escape_html(text)
-        ),
+        "math" => render_math(text, DisplayStyle::Inline, None),
         "link" => {
             let title_attr = inline
                 .title
@@ -195,6 +200,28 @@ fn render_inline(inline: &InlineIr) -> String {
         "html" => crate::sanitize::sanitize_html(text),
         "hard_break" => "<br />\n".to_string(),
         _ => render_inlines(&inline.children),
+    }
+}
+
+/// Convert parsed LaTeX into MathML in the shared renderer rather than asking
+/// each frontend to load and execute a JavaScript typesetter. WebKit renders
+/// MathML natively, and the same semantic output also reaches Quick Look and
+/// any future HTML consumer.
+fn render_math(latex: &str, style: DisplayStyle, id: Option<&str>) -> String {
+    let (tag, class, suffix) = match style {
+        DisplayStyle::Block => ("div", "math math-display", "\n"),
+        DisplayStyle::Inline => ("span", "math math-inline", ""),
+    };
+    let id_attr = id
+        .map(|value| format!(" id=\"{}\"", escape_html(value)))
+        .unwrap_or_default();
+
+    match latex_to_mathml(latex, style) {
+        Ok(mathml) => format!("<{tag}{id_attr} class=\"{class}\">{mathml}</{tag}>{suffix}"),
+        Err(_) => format!(
+            "<{tag}{id_attr} class=\"{class} math-error\" title=\"Unable to render this equation\"><code>{}</code></{tag}>{suffix}",
+            escape_html(latex)
+        ),
     }
 }
 
@@ -323,6 +350,70 @@ mod tests {
         assert!(html.contains("<strong>bold</strong>"));
         assert!(html.contains("<em>italic</em>"));
         assert!(html.contains("href=\"https://example.com\""));
+    }
+
+    #[test]
+    fn inline_math_renders_as_mathml_without_client_side_javascript() {
+        let html = render(r"Quadratic: $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$");
+
+        assert!(html.contains("class=\"math math-inline\""), "got: {html}");
+        assert!(html.contains("<math"), "got: {html}");
+        assert!(html.contains("<mfrac>"), "got: {html}");
+        assert!(!html.contains(r"\frac"), "got: {html}");
+    }
+
+    #[test]
+    fn display_math_renders_as_block_mathml() {
+        let html = render("$$\nE = mc^2\n$$\n");
+
+        assert!(html.contains("class=\"math math-display\""), "got: {html}");
+        assert!(html.contains("<math"), "got: {html}");
+        assert!(html.contains("display=\"block\""), "got: {html}");
+        assert!(html.contains("<msup>"), "got: {html}");
+    }
+
+    #[test]
+    fn backslash_delimited_math_renders_for_markdown_it_compatibility() {
+        let html = render(
+            r"Inline: \(E = mc^2\)
+
+Display: \[x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}\]",
+        );
+
+        assert_eq!(html.matches("<math").count(), 2, "got: {html}");
+        assert!(html.contains("<msup>"), "got: {html}");
+        assert!(html.contains("<mfrac>"), "got: {html}");
+        assert!(!html.contains(r"\("), "got: {html}");
+        assert!(!html.contains(r"\["), "got: {html}");
+    }
+
+    #[test]
+    fn invalid_math_falls_back_to_escaped_source() {
+        let html = render(r"Broken: $\frac{1}{$");
+
+        assert!(html.contains("math-error"), "got: {html}");
+        assert!(!html.contains("<script"), "got: {html}");
+    }
+
+    #[test]
+    fn emoji_shortcodes_and_emoticons_render_in_text_nodes() {
+        let html = render("Classic: :wink: :cry: :laughing: :yum:\n\nShortcuts: :-) :-( 8-) ;)\n");
+
+        assert!(html.contains("😉"), "got: {html}");
+        assert!(html.contains("😢"), "got: {html}");
+        assert!(html.contains("😆"), "got: {html}");
+        assert!(html.contains("😋"), "got: {html}");
+        assert!(!html.contains(":wink:"), "got: {html}");
+        assert!(!html.contains(":-)"), "got: {html}");
+    }
+
+    #[test]
+    fn emoji_expansion_does_not_touch_inline_code_or_urls() {
+        let html = render("`:wink:` and https://example.com/a:b and :rocket:\n");
+
+        assert!(html.contains("<code>:wink:</code>"), "got: {html}");
+        assert!(html.contains("https://example.com/a:b"), "got: {html}");
+        assert!(html.contains("🚀"), "got: {html}");
     }
 
     #[test]

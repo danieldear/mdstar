@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Native workspace source-list. Titlebar controls are supplied by the
@@ -9,29 +10,44 @@ struct WorkspaceSidebarView: View {
     private var isSearching: Bool { !search.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
-        List {
-            Section {
-                folderRoots
-            } header: {
-                HStack {
-                    Text("Folders")
-                    Spacer()
-                    Button(action: workspace.chooseWorkspace) {
-                        Image(systemName: "plus")
+        VStack(spacing: 0) {
+            // `.searchable(placement: .sidebar)` only remains sidebar-local
+            // while this view is hosted by NavigationSplitView. The workspace
+            // now uses an outer HSplitView so its three columns cannot overlap;
+            // keep the native search control physically inside this column
+            // rather than allowing SwiftUI to promote it into the window
+            // toolbar.
+            SidebarSearchField(
+                text: $search,
+                prompt: "Filter files and headings"
+            )
+            .frame(height: 28)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
+
+            List {
+                Section {
+                    folderRoots
+                } header: {
+                    HStack {
+                        Text("Folders")
+                        Spacer()
+                        Button(action: workspace.chooseWorkspace) {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Add Folder to Workspace")
+                        .accessibilityLabel("Add folder to workspace")
                     }
-                    .buttonStyle(.borderless)
-                    .help("Add Folder to Workspace")
-                    .accessibilityLabel("Add folder to workspace")
+                }
+
+                Section("Document Structure") {
+                    outlineContent
                 }
             }
-
-            Section("Document Structure") {
-                outlineContent
-            }
+            .listStyle(.sidebar)
         }
-        .listStyle(.sidebar)
-        .searchable(text: $search, placement: .sidebar, prompt: "Filter files and headings")
-        .navigationTitle("MD Star")
     }
 
     // MARK: - Folders
@@ -81,6 +97,44 @@ struct WorkspaceSidebarView: View {
         guard isSearching else { return outline }
         let query = search.lowercased()
         return outline.filter { $0.text.lowercased().contains(query) }
+    }
+}
+
+/// A real `NSSearchField` keeps the standard macOS search affordance, clear
+/// button, keyboard behaviour, and accessibility while remaining part of the
+/// sidebar's layout instead of becoming a window-toolbar item.
+private struct SidebarSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let prompt: String
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.placeholderString = prompt
+        field.sendsSearchStringImmediately = true
+        field.sendsWholeSearchString = false
+        field.delegate = context.coordinator
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        if field.stringValue != text {
+            field.stringValue = text
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        private var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField else { return }
+            text.wrappedValue = field.stringValue
+        }
     }
 }
 

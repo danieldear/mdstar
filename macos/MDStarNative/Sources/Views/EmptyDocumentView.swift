@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct EmptyDocumentView: View {
+    let newFile: () -> Void
     let openFile: () -> Void
     let openWorkspace: () -> Void
 
@@ -14,7 +15,7 @@ struct EmptyDocumentView: View {
             VStack(spacing: 6) {
                 Text("Nothing open yet")
                     .font(.title2.weight(.semibold))
-                Text("Open a Markdown file, or open a folder to browse your workspace.")
+                Text("Create a Markdown file, open an existing document, or browse a workspace.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -22,10 +23,16 @@ struct EmptyDocumentView: View {
             }
 
             HStack(spacing: 12) {
+                Button(action: newFile) {
+                    Label("New File…", systemImage: "doc.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut("n", modifiers: .command)
+
                 Button(action: openFile) {
                     Label("Open File…", systemImage: "doc")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .keyboardShortcut("o", modifiers: .command)
 
                 Button(action: openWorkspace) {
@@ -36,7 +43,7 @@ struct EmptyDocumentView: View {
             }
             .controlSize(.large)
 
-            Text("Tip: drag a file onto the window, or press Space to peek at the source.")
+            Text("Tip: use ⌘N to create a document, or drag a file onto the window.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 4)

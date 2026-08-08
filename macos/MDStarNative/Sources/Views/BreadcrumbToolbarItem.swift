@@ -17,8 +17,11 @@ struct BreadcrumbToolbarItem: View {
                         .truncationMode(isLast ? .middle : .tail)
                     if !isLast {
                         Image(systemName: "chevron.right")
+                            .frame(width: 8, height: 8)
+                            .fixedSize()
                             .foregroundStyle(.tertiary)
                             .imageScale(.small)
+                            .padding(.horizontal, 4)
                     }
                 }
             } else {

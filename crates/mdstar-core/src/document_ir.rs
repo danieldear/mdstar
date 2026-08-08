@@ -142,7 +142,8 @@ pub fn parse_document_ir_with_diagnostics(input: &str, origin: &str) -> Result<D
         },
         ..ParseOptions::default()
     };
-    let root = markdown::to_mdast(input, &options)
+    let normalized = crate::normalize_compat_math_delimiters(input);
+    let root = markdown::to_mdast(&normalized, &options)
         .map_err(|message| MarkdownError::ParserAdapter(message.reason.clone()))?;
 
     let document_id = format!("doc-{:016x}", stable_hash(origin));
@@ -513,5 +514,26 @@ mod tests {
                 .unwrap()
                 .contains("schema_version")
         );
+    }
+
+    #[test]
+    fn compatibility_math_keeps_source_offsets_and_code_literal() {
+        let input = "Before \\(E = mc^2\\) after\n\n`\\(literal\\)`\n";
+        let document =
+            parse_document_ir_with_diagnostics(input, "file:///workspace/science.md").unwrap();
+
+        let paragraph = &document.blocks[0];
+        assert_eq!(
+            paragraph.range.as_ref().unwrap().end.byte_offset,
+            input.find('\n').unwrap()
+        );
+        assert!(paragraph.inlines.iter().any(|inline| inline.kind == "math"));
+        let code_paragraph = &document.blocks[1];
+        let code = code_paragraph
+            .inlines
+            .iter()
+            .find(|inline| inline.kind == "code")
+            .unwrap();
+        assert_eq!(code.text.as_deref(), Some(r"\(literal\)"));
     }
 }
