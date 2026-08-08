@@ -50,15 +50,25 @@ struct WebReaderView: NSViewRepresentable {
         }
 
         let webView = ReaderWebView(frame: .zero, configuration: configuration)
+        // WKWebView has a strong intrinsic horizontal resistance by default.
+        // The document CSS is responsive, so let the native split hierarchy
+        // determine its width when sidebars or the source pane are visible.
+        webView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        webView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // The bridge reports whether a selection exists, which gates the
         // annotation commands in the contextual menu.
         webView.hasSelection = { [weak coordinator = context.coordinator] in
             coordinator?.hasSelection ?? false
         }
+        webView.reloadPreview = { [weak coordinator = context.coordinator] in
+            coordinator?.reloadPreview()
+        }
         webView.navigationDelegate = context.coordinator
         webView.allowsMagnification = false
 
         context.coordinator.webView = webView
+        context.coordinator.signature = readerSignature(for: webView)
+        context.coordinator.sourceHash = source.hashValue
         context.coordinator.load(
             document: document, fileURL: fileURL, source: source, settings: settings
         )
@@ -69,27 +79,33 @@ struct WebReaderView: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.parent = self
 
-        let signature = ReaderSignature(
-            documentID: document.documentID,
-            origin: document.origin,
-            fontSize: settings.fontSize,
-            family: settings.fontFamily,
-            lineSpacing: settings.lineSpacing,
-            contentWidth: settings.contentWidth,
-            isDark: webView.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua,
-            sourceHash: source.hashValue
+        let signature = readerSignature(for: webView)
+        let sourceHash = source.hashValue
+        let refreshAction = Self.refreshAction(
+            previousSignature: coordinator.signature,
+            previousSourceHash: coordinator.sourceHash,
+            nextSignature: signature,
+            nextSourceHash: sourceHash
         )
-        if coordinator.signature != signature {
-            coordinator.signature = signature
+        coordinator.signature = signature
+        coordinator.sourceHash = sourceHash
+
+        switch refreshAction {
+        case .reloadPage:
             coordinator.load(
                 document: document, fileURL: fileURL, source: source, settings: settings
             )
+        case .replaceBody:
+            coordinator.replaceBody(document: document, fileURL: fileURL, source: source)
+        case .none:
+            break
         }
 
         coordinator.apply(searchQuery: searchQuery)
         coordinator.apply(annotations: annotations.annotations(for: document.documentID))
 
-        if let focusedBlockID, coordinator.lastScrolledBlockID != focusedBlockID {
+        if let focusedBlockID,
+           refreshAction == .reloadPage || coordinator.lastScrolledBlockID != focusedBlockID {
             coordinator.lastScrolledBlockID = focusedBlockID
             coordinator.scroll(toBlock: focusedBlockID)
         }
@@ -105,8 +121,34 @@ struct WebReaderView: NSViewRepresentable {
         let lineSpacing: Double
         let contentWidth: Double
         let isDark: Bool
-        /// Included so editing the buffer re-renders the preview.
-        let sourceHash: Int
+    }
+
+    enum RefreshAction: Equatable {
+        case none
+        case replaceBody
+        case reloadPage
+    }
+
+    static func refreshAction(
+        previousSignature: ReaderSignature?,
+        previousSourceHash: Int?,
+        nextSignature: ReaderSignature,
+        nextSourceHash: Int
+    ) -> RefreshAction {
+        guard previousSignature == nextSignature else { return .reloadPage }
+        return previousSourceHash == nextSourceHash ? .none : .replaceBody
+    }
+
+    private func readerSignature(for webView: WKWebView) -> ReaderSignature {
+        ReaderSignature(
+            documentID: document.documentID,
+            origin: document.origin,
+            fontSize: settings.fontSize,
+            family: settings.fontFamily,
+            lineSpacing: settings.lineSpacing,
+            contentWidth: settings.contentWidth,
+            isDark: webView.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        )
     }
 
     // MARK: - Coordinator
@@ -116,6 +158,7 @@ struct WebReaderView: NSViewRepresentable {
         var parent: WebReaderView
         weak var webView: WKWebView?
         var signature: ReaderSignature?
+        var sourceHash: Int?
         var lastScrolledBlockID: String?
         /// Mirrors the page's selection so the contextual menu can offer the
         /// annotation commands only when something is selected.
@@ -125,6 +168,8 @@ struct WebReaderView: NSViewRepresentable {
         private var isLoaded = false
         private var pendingSearch: String?
         private var pendingAnnotations: [Annotation]?
+        private var pendingScrollBlockID: String?
+        private var pendingBodyReplacement: String?
         private var appliedSearch: String?
         /// Directory the document lives in; the only place resources are served
         /// from, so a document cannot pull files from elsewhere on disk.
@@ -152,11 +197,49 @@ struct WebReaderView: NSViewRepresentable {
             )
 
             isLoaded = false
+            pendingBodyReplacement = nil
+            pendingScrollBlockID = nil
             appliedSearch = nil
             // A custom scheme keeps relative image paths working without
             // handing the page blanket file:// access.
             let baseURL = URL(string: "\(WebReaderView.resourceScheme)://document/")
             webView.loadHTMLString(page, baseURL: baseURL)
+        }
+
+        /// Replaces only the rendered document body while keeping the current
+        /// WKWebView page and viewport alive. A full `loadHTMLString` here would
+        /// reset scroll position to zero on every editor keystroke.
+        func replaceBody(document: DocumentIR, fileURL: URL?, source: String) {
+            let url = fileURL ?? URL(fileURLWithPath: document.origin)
+            resourceRoot = url.deletingLastPathComponent()
+
+            let rendered = source.isEmpty
+                ? htmlService.html(forFileAt: url)
+                : htmlService.html(forSource: source, origin: url.path)
+            guard let body = rendered else { return }
+            guard isLoaded else {
+                pendingBodyReplacement = body
+                return
+            }
+            replaceLoadedBody(with: body)
+        }
+
+        private func replaceLoadedBody(with body: String) {
+            appliedSearch = nil
+            hasSelection = false
+            parent.onSelectionChange(nil)
+            evaluate(
+                "window.__mdstar && window.__mdstar.replaceBody(\(Self.quote(body)));"
+            )
+        }
+
+        func reloadPreview() {
+            load(
+                document: parent.document,
+                fileURL: parent.fileURL,
+                source: parent.source,
+                settings: parent.settings
+            )
         }
 
         private static func page(body: String, base: String, theme: String) -> String {
@@ -178,7 +261,16 @@ struct WebReaderView: NSViewRepresentable {
         // MARK: Commands
 
         func scroll(toBlock id: String) {
-            evaluate("window.__mdstar && window.__mdstar.scrollToBlock(\(Self.quote(id)));")
+            guard isLoaded else {
+                pendingScrollBlockID = id
+                return
+            }
+            // The page extends underneath the transparent toolbar. Position
+            // the edited block below that native overlap plus a small context
+            // margin instead of letting scrollIntoView hide it in the fade.
+            let topInset = (webView.map(WindowToolbarGeometry.overlap(for:)) ?? 0) + 24
+            evaluate(
+                "window.__mdstar && window.__mdstar.scrollToBlock(\(Self.quote(id)), \(Double(topInset)));")
         }
 
         func apply(searchQuery: String) {
@@ -221,10 +313,16 @@ struct WebReaderView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
+            if let pendingBodyReplacement {
+                replaceLoadedBody(with: pendingBodyReplacement)
+            }
             if let pendingSearch { apply(searchQuery: pendingSearch) }
             if let pendingAnnotations { apply(annotations: pendingAnnotations) }
+            if let pendingScrollBlockID { scroll(toBlock: pendingScrollBlockID) }
+            pendingBodyReplacement = nil
             pendingSearch = nil
             pendingAnnotations = nil
+            pendingScrollBlockID = nil
         }
 
         /// Only the initial in-memory load is allowed; anything the page tries
@@ -232,8 +330,18 @@ struct WebReaderView: NSViewRepresentable {
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+            decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
         ) {
+            if ReaderWebView.handlesReloadNavigation(navigationAction.navigationType) {
+                // `loadHTMLString` uses mdstar-resource://document/ only as a
+                // relative-resource base. Letting WebKit reload that URL turns
+                // it into a top-level navigation, which Launch Services then
+                // mistakes for an external custom URL. Rebuild the in-memory
+                // page instead.
+                decisionHandler(.cancel)
+                Task { @MainActor [weak self] in self?.reloadPreview() }
+                return
+            }
             guard navigationAction.navigationType == .other else {
                 if let url = navigationAction.request.url { parent.onOpenLink(url) }
                 decisionHandler(.cancel)
@@ -338,28 +446,66 @@ struct WebReaderView: NSViewRepresentable {
 /// right-clicking.
 final class ReaderWebView: WKWebView {
     var hasSelection: () -> Bool = { false }
+    var reloadPreview: () -> Void = {}
 
-    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
-        super.willOpenMenu(menu, with: event)
-        guard hasSelection() else { return }
+    static func handlesReloadNavigation(_ navigationType: WKNavigationType) -> Bool {
+        navigationType == .reload
+    }
 
-        menu.insertItem(.separator(), at: 0)
+    static func isReloadMenuItem(_ item: NSMenuItem) -> Bool {
+        let action = item.action.map(NSStringFromSelector) ?? ""
+        return item.title == "Reload" || action == "reload:" || action == "reloadFromOrigin:"
+    }
+
+    static func annotationMenuItems(hasSelection: Bool) -> [NSMenuItem] {
+        let highlight = NSMenuItem(
+            title: "Highlight",
+            action: #selector(addHighlightFromMenu),
+            keyEquivalent: ""
+        )
+        highlight.isEnabled = hasSelection
 
         let comment = NSMenuItem(
             title: "Add Comment\u{2026}",
             action: #selector(addCommentFromMenu),
             keyEquivalent: ""
         )
-        comment.target = self
-        menu.insertItem(comment, at: 0)
+        comment.isEnabled = hasSelection
 
-        let highlight = NSMenuItem(
-            title: "Highlight",
-            action: #selector(addHighlightFromMenu),
-            keyEquivalent: ""
-        )
-        highlight.target = self
-        menu.insertItem(highlight, at: 0)
+        return [highlight, comment]
+    }
+
+    static func insertAnnotationItems(
+        into menu: NSMenu,
+        hasSelection: Bool,
+        target: AnyObject?
+    ) {
+        let titles = Set(annotationMenuItems(hasSelection: true).map(\.title))
+        for item in menu.items where titles.contains(item.title) {
+            menu.removeItem(item)
+        }
+
+        let annotationItems = annotationMenuItems(hasSelection: hasSelection)
+        for item in annotationItems.reversed() {
+            item.target = target
+            menu.insertItem(item, at: 0)
+        }
+        menu.insertItem(.separator(), at: annotationItems.count)
+    }
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        for item in menu.items {
+            if Self.isReloadMenuItem(item) {
+                item.target = self
+                item.action = #selector(reloadPreviewFromMenu)
+            }
+        }
+        Self.insertAnnotationItems(into: menu, hasSelection: hasSelection(), target: self)
+    }
+
+    @objc private func reloadPreviewFromMenu() {
+        reloadPreview()
     }
 
     @objc private func addHighlightFromMenu() {

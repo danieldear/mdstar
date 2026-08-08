@@ -103,6 +103,42 @@ blockquote {
 
 blockquote > :last-child { margin-bottom: 0; }
 
+/* Math -------------------------------------------------------------------- */
+
+.math-inline {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: -0.12em;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.math-display {
+  display: block;
+  max-width: 100%;
+  margin: 1.25em 0;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+  background: var(--reader-fill);
+  border: 1px solid var(--reader-hairline);
+  border-radius: 10px;
+}
+
+.math math {
+  color: inherit;
+  font-size: 1.08em;
+}
+
+.math-display math { margin: 0 auto; }
+
+.math-error {
+  color: var(--reader-secondary);
+  text-align: left;
+  border-color: var(--reader-mark-active);
+}
+
 /* Lists ------------------------------------------------------------------- */
 
 ul, ol { margin: 0 0 1em; padding-left: 1.6em; }
