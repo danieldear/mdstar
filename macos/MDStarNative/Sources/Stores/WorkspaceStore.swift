@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 private struct BackgroundFailure: Error, Sendable {
     let message: String
@@ -24,6 +25,10 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var activeHeadingID: String?
     @Published private(set) var rawText: String = ""
     @Published private(set) var isDirty = false
+    /// UTF-16 caret location reported by AppKit's source editor. Keeping this
+    /// separate from rendered selections lets split preview follow editing
+    /// without changing bookmark/outline navigation state.
+    @Published private(set) var editorCaretUTF16Offset: Int?
     /// Changes whenever the parsed document changes, including a live split
     /// edit. The document ID deliberately remains stable for anchors, so UI
     /// renderers need this separate identity to know their content changed.
@@ -98,6 +103,64 @@ final class WorkspaceStore: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url {
             openFile(url, recordHistory: true)
         }
+    }
+
+    /// Creates a Markdown document through the standard macOS save panel,
+    /// opens it as a tab, and enters split mode ready for editing.
+    func chooseNewMarkdownFile() {
+        let panel = NSSavePanel()
+        panel.title = "New Markdown File"
+        panel.message = "Choose where to create the Markdown document."
+        panel.prompt = "Create"
+        panel.nameFieldStringValue = "Untitled.md"
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.directoryURL = workspaceURL
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            _ = try createMarkdownFile(at: url)
+        } catch {
+            errorMessage = "Could not create (url.lastPathComponent): (error.localizedDescription)"
+        }
+    }
+
+    /// Testable core of the New File workflow. Existing files are never
+    /// overwritten here; `NSSavePanel` handles replacement confirmation for
+    /// the interactive path and direct callers receive the filesystem error.
+    @discardableResult
+    func createMarkdownFile(at proposedURL: URL, contents: String? = nil) throws -> URL {
+        let url = proposedURL.pathExtension.isEmpty
+            ? proposedURL.appendingPathExtension("md")
+            : proposedURL
+        let normalized = url.standardizedFileURL
+        let title = normalized.deletingPathExtension().lastPathComponent
+        let initialContents = contents ?? "# \(title)\n\n"
+
+        let fileManager = FileManager.default
+        guard !fileManager.fileExists(atPath: normalized.path) else {
+            throw CocoaError(
+                .fileWriteFileExists,
+                userInfo: [NSFilePathErrorKey: normalized.path]
+            )
+        }
+        guard fileManager.createFile(
+            atPath: normalized.path,
+            contents: Data(initialContents.utf8)
+        ) else {
+            throw CocoaError(
+                .fileWriteUnknown,
+                userInfo: [NSFilePathErrorKey: normalized.path]
+            )
+        }
+
+        errorMessage = nil
+        refreshFolders()
+        viewMode = .split
+        openFile(normalized, recordHistory: true)
+        return normalized
     }
 
     // MARK: - Workspace folders
@@ -188,6 +251,7 @@ final class WorkspaceStore: ObservableObject {
         openDocumentURLs = []
         replaceDocument(with: nil)
         rawText = ""
+        editorCaretUTF16Offset = nil
         bookmarks = []
         UserDefaults.standard.removeObject(forKey: foldersKey)
         UserDefaults.standard.removeObject(forKey: selectedFileKey)
@@ -219,6 +283,7 @@ final class WorkspaceStore: ObservableObject {
             case .success(let loaded):
                 self.replaceDocument(with: loaded.ir)
                 self.rawText = loaded.rawText
+                self.editorCaretUTF16Offset = nil
                 self.isDirty = false
                 self.activeHeadingID = loaded.ir.outline.first?.id
                 self.selectedURL = normalized
@@ -272,6 +337,7 @@ final class WorkspaceStore: ObservableObject {
         selectedTabURL = nil
         replaceDocument(with: nil)
         rawText = ""
+        editorCaretUTF16Offset = nil
         isDirty = false
         errorMessage = nil
         activeHeadingID = nil
@@ -303,6 +369,24 @@ final class WorkspaceStore: ObservableObject {
 
         scheduleLivePreview(source, revision: sourceRevision)
         scheduleAutosave(revision: sourceRevision)
+    }
+
+    func setEditorCaret(utf16Offset: Int) {
+        let clamped = min(max(0, utf16Offset), (rawText as NSString).length)
+        guard editorCaretUTF16Offset != clamped else { return }
+        editorCaretUTF16Offset = clamped
+    }
+
+    /// Semantic preview target for the current edit location. Rust source
+    /// ranges are UTF-8 byte offsets while NSTextView reports UTF-16 offsets,
+    /// so convert before selecting the smallest rendered block at the caret.
+    var editorFocusedBlockID: String? {
+        guard let document, let editorCaretUTF16Offset else { return nil }
+        let source = rawText as NSString
+        let clampedOffset = min(max(0, editorCaretUTF16Offset), source.length)
+        let prefix = source.substring(to: clampedOffset)
+        let byteOffset = prefix.lengthOfBytes(using: .utf8)
+        return document.blockID(atSourceByteOffset: byteOffset)
     }
 
     /// Saves the current source atomically. Returns false when disk write
@@ -558,6 +642,48 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         openFile(selectedURL, recordHistory: false)
+    }
+}
+
+extension DocumentIR {
+    func blockID(atSourceByteOffset byteOffset: Int) -> String? {
+        let rangedBlocks = allRenderedBlocks.compactMap { block -> (BlockIR, SourceRange)? in
+            guard let range = block.range else { return nil }
+            return (block, range)
+        }
+
+        // Prefer the most specific nested block containing the caret (for
+        // example, a paragraph inside a list or blockquote).
+        let containing = rangedBlocks
+            .filter { entry in
+                entry.1.start.byteOffset <= byteOffset && byteOffset <= entry.1.end.byteOffset
+            }
+            .min(by: { lhs, rhs in
+                let lhsSpan = lhs.1.end.byteOffset - lhs.1.start.byteOffset
+                let rhsSpan = rhs.1.end.byteOffset - rhs.1.start.byteOffset
+                return lhsSpan < rhsSpan
+            })
+        if let containing {
+            return containing.0.id
+        }
+
+        // Blank lines and the EOF sit outside parser ranges. Follow the nearest
+        // preceding block so editing at the end never sends preview to the top.
+        return rangedBlocks
+            .filter { $0.1.start.byteOffset <= byteOffset }
+            .max(by: { $0.1.start.byteOffset < $1.1.start.byteOffset })?
+            .0.id
+    }
+
+    private var allRenderedBlocks: [BlockIR] {
+        func flatten(_ blocks: [BlockIR]) -> [BlockIR] {
+            blocks.flatMap { block in
+                [block]
+                    + flatten(block.children)
+                    + flatten(block.items.flatMap(\.children))
+            }
+        }
+        return flatten(blocks)
     }
 }
 

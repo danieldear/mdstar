@@ -63,9 +63,23 @@ enum ReaderBridgeScript {
         }
       };
 
-      bridge.scrollToBlock = function (id) {
+      function scrollTargetBelowTopChrome(target, topInset) {
+        const reservedTop = Math.max(0, Number(topInset) || 0);
+        const visibleBottom = Math.max(reservedTop, window.innerHeight - 24);
+        const rect = target.getBoundingClientRect();
+        // Live editing can regenerate block IDs as source ranges move. Do not
+        // animate back to the same visible block for every typed character.
+        if (rect.bottom > reservedTop && rect.top < visibleBottom) return;
+        const targetTop = window.scrollY + target.getBoundingClientRect().top;
+        window.scrollTo({
+          top: Math.max(0, targetTop - reservedTop),
+          behavior: 'auto'
+        });
+      }
+
+      bridge.scrollToBlock = function (id, topInset) {
         const target = document.getElementById(id);
-        if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        if (target) { scrollTargetBelowTopChrome(target, topInset); }
       };
 
       // ---- Selection -------------------------------------------------------
@@ -197,6 +211,25 @@ enum ReaderBridgeScript {
 
       bridge.findNext = function () { bridge.focusMatch(findIndex + 1); };
       bridge.findPrevious = function () { bridge.focusMatch(findIndex - 1); };
+
+      // ---- Live preview ---------------------------------------------------
+      // Updating the reader while typing must not navigate the WKWebView. A
+      // navigation briefly displays scroll position zero before Swift can
+      // restore the caret target, which presents as a flash on every keypress.
+      bridge.replaceBody = function (html) {
+        const root = document.getElementById('reader-root');
+        if (!root) return false;
+        const scrollX = window.scrollX;
+        const scrollY = window.scrollY;
+        root.innerHTML = html || '';
+        findMatches = [];
+        findIndex = 0;
+        lastHeading = null;
+        window.scrollTo(scrollX, scrollY);
+        reportActiveHeading();
+        post('selection', null);
+        return true;
+      };
 
       window.__mdstar = bridge;
       reportActiveHeading();

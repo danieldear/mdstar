@@ -94,3 +94,60 @@ graph LR
     assert!(preprocessed.contains("Build"));
     assert!(preprocessed.contains("Deploy"));
 }
+
+#[test]
+fn expands_emoji_and_renders_common_latex_as_readable_terminal_text() {
+    let input = r#"Classic: :wink: :cry: :laughing: :yum:
+
+Shortcuts: :-) :-( 8-) ;)
+
+Quadratic: \(x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}\)
+
+Physics: $E = mc^2$ and $F = ma$
+"#;
+
+    let output = render_markdown(
+        input,
+        RenderOptions {
+            color: false,
+            ..RenderOptions::default()
+        },
+    );
+
+    for emoji in ["😉", "😢", "😆", "😋", "😄", "😞", "😎"] {
+        assert!(output.contains(emoji), "missing {emoji:?} in: {output}");
+    }
+    assert!(!output.contains(":wink:"), "got: {output}");
+    assert!(!output.contains(r"\frac"), "got: {output}");
+    assert!(output.contains('±'), "got: {output}");
+    assert!(output.contains('√'), "got: {output}");
+    assert!(output.contains("b²"), "got: {output}");
+    assert!(output.contains("mc²"), "got: {output}");
+}
+
+#[test]
+fn rich_text_expansion_leaves_code_examples_literal() {
+    let input = r#"Text :rocket: and $E = mc^2$.
+
+Inline code: `:wink: \(x = \frac{1}{2}\)`
+
+```text
+:cry: $F = ma$ \(x = \sqrt{4}\)
+```
+"#;
+
+    let output = render_markdown(
+        input,
+        RenderOptions {
+            color: false,
+            ..RenderOptions::default()
+        },
+    );
+
+    assert!(output.contains('🚀'), "got: {output}");
+    assert!(output.contains("mc²"), "got: {output}");
+    assert!(output.contains(":wink:"), "got: {output}");
+    assert!(output.contains(r"\frac{1}{2}"), "got: {output}");
+    assert!(output.contains(":cry: $F = ma$"), "got: {output}");
+    assert!(output.contains(r"\sqrt{4}"), "got: {output}");
+}

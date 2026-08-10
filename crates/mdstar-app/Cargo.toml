@@ -1,6 +1,6 @@
 [package]
 name = "mdstar-app"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 # The single unified binary — acts as CLI in terminal, GUI when launched from Finder / .app bundle

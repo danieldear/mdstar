@@ -18,13 +18,20 @@ struct MDStarApp: App {
                 settings: settings,
                 annotations: annotations
             )
-            .frame(minWidth: 880, minHeight: 620)
+            // Three independent columns can be visible at once: workspace,
+            // source/preview split, and inspector.  A smaller minimum makes
+            // AppKit satisfy the detail split by physically displacing the
+            // side columns instead of assigning each its intended width.
+            .frame(minWidth: 1080, minHeight: 620)
             .onOpenURL { url in workspace.openFile(url, recordHistory: true) }
             .preferredColorScheme(settings.appearance.colorScheme)
         }
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
-            CommandGroup(after: .newItem) {
+            CommandGroup(replacing: .newItem) {
+                Button("New Markdown File…", action: workspace.chooseNewMarkdownFile)
+                    .keyboardShortcut("n", modifiers: .command)
+                Divider()
                 Button("Open File…", action: workspace.chooseFile)
                     .keyboardShortcut("o", modifiers: .command)
                 Button("Open Workspace…", action: workspace.chooseWorkspace)

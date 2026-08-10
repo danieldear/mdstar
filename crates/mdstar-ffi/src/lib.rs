@@ -361,6 +361,30 @@ mod tests {
     }
 
     #[test]
+    fn document_html_ffi_includes_server_rendered_math_and_emoji() {
+        let input =
+            CString::new(r"Formula: \(E = mc^2\) :rocket: :wink: :cry: :laughing: :yum: :-)")
+                .unwrap();
+        let origin = CString::new("file:///tmp/science.md").unwrap();
+        let pointer = unsafe { mdstar_document_html(input.as_ptr(), origin.as_ptr()) };
+        assert!(!pointer.is_null());
+        let html = unsafe { CStr::from_ptr(pointer) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        unsafe { mdstar_string_free(pointer) };
+
+        assert!(html.contains("<math"), "got: {html}");
+        assert!(html.contains("<msup>"), "got: {html}");
+        assert!(html.contains("🚀"), "got: {html}");
+        assert!(html.contains("😉"), "got: {html}");
+        assert!(html.contains("😢"), "got: {html}");
+        assert!(html.contains("😆"), "got: {html}");
+        assert!(html.contains("😋"), "got: {html}");
+        assert!(!html.contains(":rocket:"), "got: {html}");
+    }
+
+    #[test]
     fn workspace_tree_is_directories_first_and_filters_binary_files() {
         let root = std::env::temp_dir().join(format!("mdstar-ffi-{}", std::process::id()));
         let docs = root.join("docs");

@@ -1,3 +1,5 @@
+mod enrich;
+
 use mdansi::{
     RenderOptions as MdansiRenderOptions, Renderer as MdansiRenderer, Theme as MdansiTheme,
 };
@@ -22,7 +24,8 @@ impl Default for RenderOptions {
 }
 
 pub fn render_markdown(source: &str, options: RenderOptions) -> String {
-    let preprocessed = preprocess_mermaid_blocks(source, options);
+    let enriched = enrich::enrich_markdown(source);
+    let preprocessed = preprocess_mermaid_blocks(&enriched, options);
     let mdansi_options = MdansiRenderOptions {
         width: options.width,
         highlight: options.color,

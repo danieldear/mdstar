@@ -31,7 +31,7 @@ struct InspectorView: View {
     /// Real buttons give every inspector section a consistent 32 pt target and
     /// make the selected state explicit.
     private var inspectorSectionButtons: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 8) {
             ForEach(InspectorSection.allCases, id: \.self) { section in
                 inspectorSectionButton(section)
 
@@ -116,20 +116,32 @@ struct InspectorView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(items) { annotation in
-                        InspectorRow(
-                            icon: kind.systemImage,
-                            tint: kind == .highlight ? .yellow : .blue,
-                            title: annotation.snippet,
-                            subtitle: annotation.note.isEmpty ? nil : annotation.note,
-                            isActive: false,
-                            indent: 0,
-                            onSelect: { reveal(annotation) },
-                            onRemove: {
-                                if let documentID {
-                                    annotations.remove(annotation.id, documentID: documentID)
+                        if kind == .comment {
+                            CommentInspectorRow(
+                                annotation: annotation,
+                                onReveal: { reveal(annotation) },
+                                onRemove: {
+                                    if let documentID {
+                                        annotations.remove(annotation.id, documentID: documentID)
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        } else {
+                            InspectorRow(
+                                icon: kind.systemImage,
+                                tint: .yellow,
+                                title: annotation.snippet,
+                                subtitle: nil,
+                                isActive: false,
+                                indent: 0,
+                                onSelect: { reveal(annotation) },
+                                onRemove: {
+                                    if let documentID {
+                                        annotations.remove(annotation.id, documentID: documentID)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
                 .padding(10)
@@ -157,6 +169,121 @@ struct InspectorView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Comment rows open their content instead of silently navigating. Navigation
+/// remains an explicit action inside the detail popover so reading a comment
+/// never unexpectedly moves the document.
+private struct CommentInspectorRow: View {
+    let annotation: Annotation
+    let onReveal: () -> Void
+    let onRemove: () -> Void
+
+    @State private var isDetailPresented = false
+
+    var body: some View {
+        InspectorRow(
+            icon: Annotation.Kind.comment.systemImage,
+            tint: .blue,
+            title: annotation.note.isEmpty ? "Comment" : annotation.note,
+            subtitle: annotation.snippet,
+            isActive: false,
+            indent: 0,
+            onSelect: { isDetailPresented = true },
+            onRemove: onRemove
+        )
+        .help("Open Comment")
+        .popover(isPresented: $isDetailPresented, arrowEdge: .trailing) {
+            CommentDetailPopover(
+                annotation: annotation,
+                onReveal: {
+                    isDetailPresented = false
+                    onReveal()
+                },
+                onDelete: {
+                    isDetailPresented = false
+                    onRemove()
+                },
+                onDismiss: { isDetailPresented = false }
+            )
+        }
+    }
+}
+
+private struct CommentDetailPopover: View {
+    let annotation: Annotation
+    let onReveal: () -> Void
+    let onDelete: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Label("Comment", systemImage: "text.bubble.fill")
+                    .font(.headline)
+                    .foregroundStyle(.blue)
+
+                Spacer(minLength: 16)
+
+                Text(annotation.createdAt, format: .dateTime.month(.abbreviated).day().year())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Comment")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+
+                        Text(annotation.note.isEmpty ? "No comment text." : annotation.note)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Selected Passage")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+
+                        Text(annotation.snippet)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+                .padding(14)
+            }
+            .frame(maxHeight: 360)
+
+            Divider()
+
+            HStack {
+                Button("Delete", role: .destructive, action: onDelete)
+
+                Spacer()
+
+                Button("Done", action: onDismiss)
+                    .keyboardShortcut(.cancelAction)
+
+                Button("Reveal in Document", action: onReveal)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(width: 360)
+        .accessibilityLabel("Comment details")
     }
 }
 

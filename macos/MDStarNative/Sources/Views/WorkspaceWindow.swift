@@ -15,25 +15,10 @@ struct WorkspaceWindow: View {
     @State private var webSelection: WebSelection?
     @State private var pendingComment: SelectedText?
     @State private var commentDraft = ""
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var isSidebarVisible = true
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            WorkspaceSidebarView(workspace: workspace)
-                .navigationSplitViewColumnWidth(min: 232, ideal: 264, max: 340)
-        } detail: {
-            detailContent
-                .workspaceInspector(
-                    isPresented: $inspector.isVisible,
-                    inspector: inspector,
-                    workspace: workspace,
-                    annotations: annotations
-                )
-                // The document runs beneath the full toolbar/titlebar surface;
-                // the reader stylesheet supplies its own protected top inset.
-                .ignoresSafeArea(.all, edges: .top)
-        }
-        .navigationSplitViewStyle(.balanced)
+        workspaceLayout
         .toolbar { toolbarContent }
         .onReceive(NotificationCenter.default.publisher(for: .mdstarOpenedDocument)) { notification in
             if let url = notification.object as? URL {
@@ -41,8 +26,43 @@ struct WorkspaceWindow: View {
             }
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: acceptDrop)
-        .background(WindowConfigurator(layoutRevision: workspace.viewMode == .split ? 1 : 0))
+        .background(WindowConfigurator())
         .task { workspace.restoreWorkspaceIfNeeded() }
+    }
+
+    /// `NavigationSplitView` presents the sidebar as an overlay in some
+    /// titlebar/full-size-content configurations. That is fine for a simple
+    /// reader, but it means its detail geometry can still span beneath the
+    /// sidebar. A workspace must have disjoint columns: the outer split owns
+    /// the resizable sidebar, while the center shell owns source/preview and
+    /// the fixed inspector rail.
+    @ViewBuilder
+    private var workspaceLayout: some View {
+        if isSidebarVisible {
+            HSplitView {
+                WorkspaceSidebarView(workspace: workspace)
+                    .frame(minWidth: 232, idealWidth: 264, maxWidth: 340, maxHeight: .infinity)
+
+                documentShell
+                    .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else {
+            documentShell
+        }
+    }
+
+    private var documentShell: some View {
+        detailContent
+            .workspaceInspector(
+                isPresented: $inspector.isVisible,
+                inspector: inspector,
+                workspace: workspace,
+                annotations: annotations
+            )
+            // Respect the toolbar safe area at the shell boundary. Applying
+            // `ignoresSafeArea` here also moved the inspector's persistent
+            // controls and the document's initial heading beneath the toolbar.
+            // The AppKit reader still manages scrolling inside its own bounds.
     }
 
     // MARK: - Native Toolbar
@@ -51,8 +71,18 @@ struct WorkspaceWindow: View {
     /// history controls use the navigation placement so they sit beside it.
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        // Leading: history controls sit next to the system sidebar toggle.
+        // Leading: workspace visibility and history controls.
         ToolbarItemGroup(placement: .navigation) {
+            Button {
+                isSidebarVisible.toggle()
+            } label: {
+                Label(
+                    isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+                    systemImage: "sidebar.leading"
+                )
+            }
+            .help(isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+
             Button(action: goBack) {
                 Label("Back", systemImage: "chevron.backward")
             }
@@ -88,6 +118,11 @@ struct WorkspaceWindow: View {
 
         // Trailing: document operations and the inspector.
         ToolbarItemGroup(placement: .primaryAction) {
+            Button(action: workspace.chooseNewMarkdownFile) {
+                Label("New Markdown File", systemImage: "doc.badge.plus")
+            }
+            .help("New Markdown File (⌘N)")
+
             Button(action: workspace.chooseFile) {
                 Label("Open File", systemImage: "folder")
             }
@@ -170,6 +205,7 @@ struct WorkspaceWindow: View {
                 errorState(error)
             } else {
                 EmptyDocumentView(
+                    newFile: workspace.chooseNewMarkdownFile,
                     openFile: workspace.chooseFile,
                     openWorkspace: workspace.chooseWorkspace
                 )
@@ -258,10 +294,10 @@ struct WorkspaceWindow: View {
         case .split:
             HSplitView {
                 SourceTextView(workspace: workspace)
-                .frame(minWidth: 300, idealWidth: 460)
+                    .frame(minWidth: 240, idealWidth: 420)
                 renderer
-                    .frame(minWidth: 360)
-            }
+                    .frame(minWidth: 280)
+            }.ignoresSafeArea(edges: .top)
         }
     }
 
@@ -276,7 +312,9 @@ struct WorkspaceWindow: View {
                     settings: settings,
                     annotations: annotations,
                     source: workspace.rawText,
-                    focusedBlockID: workspace.focusedBlockID,
+                    focusedBlockID: workspace.viewMode == .split
+                        ? workspace.editorFocusedBlockID ?? workspace.focusedBlockID
+                        : workspace.focusedBlockID,
                     searchQuery: workspace.isFindPresented ? workspace.findQuery : "",
                     onOpenLink: openDocumentLink,
                     onActiveHeadingChange: { workspace.setActiveHeading($0) },
@@ -370,27 +408,38 @@ struct WorkspaceWindow: View {
 // MARK: - Inspector
 
 private extension View {
-    @ViewBuilder
+    /// Own the detail/inspector geometry explicitly.  SwiftUI's `.inspector`
+    /// is normally ideal, but when it is nested in a NavigationSplitView whose
+    /// detail contains an `HSplitView`, AppKit can allow the inner split to
+    /// negotiate the outer columns.  That is backwards for a workspace: the
+    /// left navigation and right inspector are stable rails; the document is
+    /// the only region allowed to use whatever width remains.
     func workspaceInspector(
         isPresented: Binding<Bool>,
         inspector: InspectorStore,
         workspace: WorkspaceStore,
         annotations: AnnotationStore
     ) -> some View {
-        if #available(macOS 14.0, *) {
-            self.inspector(isPresented: isPresented) {
-                InspectorView(inspector: inspector, workspace: workspace, annotations: annotations)
-                    .inspectorColumnWidth(min: 250, ideal: 280, max: 340)
-            }
-        } else {
+        GeometryReader { proxy in
+            let inspectorWidth: CGFloat = isPresented.wrappedValue ? 280 : 0
+            let dividerWidth: CGFloat = isPresented.wrappedValue ? 1 : 0
+            let documentWidth = max(0, proxy.size.width - inspectorWidth - dividerWidth)
+
             HStack(spacing: 0) {
                 self
+                    // Give the reader/split an exact proposal.  It can no
+                    // longer negotiate more space by moving either rail.
+                    .frame(width: documentWidth, height: proxy.size.height, alignment: .leading)
+                    .clipped()
+
                 if isPresented.wrappedValue {
                     Divider()
                     InspectorView(inspector: inspector, workspace: workspace, annotations: annotations)
-                        .frame(minWidth: 250, idealWidth: 280, maxWidth: 340)
+                        .frame(width: inspectorWidth, height: proxy.size.height, alignment: .topLeading)
+                        .background(.bar)
                 }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
         }
     }
 }

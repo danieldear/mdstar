@@ -33,7 +33,26 @@ pkill -x "$APP_NAME" >/dev/null 2>&1 || true
   [[ -f "$APP_ICON_SOURCE" ]] || { echo "missing app icon: $APP_ICON_SOURCE" >&2; exit 1; }
   cp "$APP_ICON_SOURCE" "$APP_CONTENTS/Resources/AppIcon.icns"
   install_name_tool -id "@rpath/libmdstar_ffi.dylib" "$APP_FRAMEWORKS/libmdstar_ffi.dylib"
-  install_name_tool -change "$ROOT_DIR/target/debug/deps/libmdstar_ffi.dylib" "@rpath/libmdstar_ffi.dylib" "$APP_BINARY"
+
+  # SwiftPM may resolve `-lmdstar_ffi` from target/ffi (release/universal) or
+  # target/debug depending on what a previous packaging run left behind.  The
+  # dylib's own install id is then copied into the executable, so rewriting one
+  # hard-coded debug path is not sufficient: a locally-built app can silently
+  # load a stale release renderer from the workspace instead of the dylib that
+  # was just embedded in the bundle.
+  while IFS= read -r linked_library; do
+    [[ "$linked_library" == "@rpath/libmdstar_ffi.dylib" ]] && continue
+    install_name_tool -change "$linked_library" "@rpath/libmdstar_ffi.dylib" "$APP_BINARY"
+  done < <(
+    otool -L "$APP_BINARY" \
+      | awk 'NR > 1 { print $1 }' \
+      | grep '/libmdstar_ffi\.dylib$' || true
+  )
+
+  if ! otool -L "$APP_BINARY" | grep -q '@rpath/libmdstar_ffi\.dylib'; then
+    echo "failed to bind $APP_NAME to its bundled libmdstar_ffi.dylib" >&2
+    exit 1
+  fi
   chmod +x "$APP_BINARY"
 )
 
@@ -46,7 +65,7 @@ cat >"$APP_CONTENTS/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>MD Star</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>0.1.1</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>$MIN_SYSTEM_VERSION</string>

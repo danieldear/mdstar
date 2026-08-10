@@ -40,6 +40,12 @@ struct TextKitReaderView: NSViewRepresentable {
         textView.autoresizingMask = [.width]
 
         let scrollView = NSScrollView()
+        // NSScrollView can otherwise advertise the text document's widest
+        // laid-out line as a required width through the SwiftUI bridge.  The
+        // reader is explicitly reflowable, so it must be the detail area's
+        // lowest-priority horizontal view.
+        scrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
