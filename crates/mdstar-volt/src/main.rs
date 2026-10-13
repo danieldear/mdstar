@@ -308,6 +308,8 @@ struct Args {
     mode: Option<Mode>,
     /// Snapshot only: type `/` on a new last line to show the insert menu.
     slash: bool,
+    /// Snapshot only: select all rendered text.
+    select_all: bool,
 }
 
 fn args() -> Result<Args, String> {
@@ -323,6 +325,7 @@ fn args() -> Result<Args, String> {
         tab: None,
         mode: None,
         slash: false,
+        select_all: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -359,6 +362,7 @@ fn args() -> Result<Args, String> {
             "--find" => a.find = Some(it.next().ok_or("--find takes a query")?),
             "--settings" => a.settings = true,
             "--slash" => a.slash = true,
+            "--select-all" => a.select_all = true,
             "--mode" => {
                 a.mode = Some(match it.next().as_deref() {
                     Some("preview") => Mode::Preview,
@@ -421,7 +425,14 @@ fn settle(
 }
 
 /// Render one frame offscreen (GPU when available) to a PNG.
-fn snapshot(app: &mut App, path: &Path, size: [f32; 2], scale: f32, scroll: f32) -> Result<(), String> {
+fn snapshot(
+    app: &mut App,
+    path: &Path,
+    size: [f32; 2],
+    scale: f32,
+    scroll: f32,
+    select_all: bool,
+) -> Result<(), String> {
     let (doc, mut handlers) = view::view(app).build().map_err(|e| e.to_string())?.into_parts();
     let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).map_err(|e| e.to_string())?;
     let viewport = volt_ui_kit::Viewport::new(size[0] * scale, size[1] * scale, scale)
@@ -435,6 +446,9 @@ fn snapshot(app: &mut App, path: &Path, size: [f32; 2], scale: f32, scroll: f32)
         runtime.scroll_at((size[0] - 300.) * scale, size[1] * 0.5 * scale, [0., step]);
         settle(&mut runtime, &mut handlers, app, viewport, &mut painter)?;
         left -= step;
+    }
+    if select_all {
+        runtime.select_all_text(&mut painter);
     }
     runtime.settle_animations();
     let ui = theme(app, ThemeMode::Light);
@@ -489,7 +503,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.select = (end, end, 1);
             }
         }
-        return Ok(snapshot(&mut app, path, args.size, args.scale, args.scroll)?);
+        return Ok(snapshot(
+            &mut app,
+            path,
+            args.size,
+            args.scale,
+            args.scroll,
+            args.select_all,
+        )?);
     }
     Application::new("MD Star", app, view::view)
         .size(1180, 820)
@@ -644,6 +665,41 @@ mod tests {
         assert_eq!(app.find.as_ref().unwrap().summary(), "2 of 2");
         app.close_find();
         assert!(app.find.is_none());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Rendered text selects with the pointer across blocks, skips list
+    /// markers, and reaches the app (for Copy, Look Up, Share…).
+    #[test]
+    fn rendered_text_selects_across_blocks_and_reports_it() {
+        let (dir, file) = temp_doc("select", "# Title\n\nFirst paragraph here.\n\n- one item\n- two item\n");
+        let mut app = App::new(Settings::default(), None);
+        app.open(file);
+        let viewport = volt_ui_kit::Viewport::new(1000., 800., 1.).unwrap();
+        let mut metrics = RasterPainter::new(viewport);
+        let (doc, mut handlers) = view::view(&app).build().unwrap().into_parts();
+        let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        settle(&mut runtime, &mut handlers, &mut app, viewport, &mut metrics).unwrap();
+        let find = |runtime: &Runtime, needle: &str| {
+            runtime
+                .boxes()
+                .iter()
+                .filter(|b| b.text().starts_with(needle))
+                .map(|b| b.bounds.bounds())
+                .next()
+                .unwrap()
+        };
+        let first = find(&runtime, "First");
+        let item = find(&runtime, "two item");
+        assert!(runtime.text_select_press(first[0] + 1., first[1] + first[3] / 2., 1, false, &mut metrics));
+        assert!(runtime.text_select_drag(item[0] + item[2] - 1., item[1] + item[3] / 2., &mut metrics));
+        runtime.text_select_release();
+        runtime.dispatch_text_selection(&mut handlers, &mut app).unwrap();
+        assert_eq!(app.selected_text, "First paragraph here.\none item\ntwo item");
+        // A double-click picks one word.
+        runtime.text_select_press(first[0] + 60., first[1] + first[3] / 2., 2, false, &mut metrics);
+        runtime.text_select_release();
+        assert_eq!(runtime.selected_text(), Some("paragraph"));
         std::fs::remove_dir_all(dir).ok();
     }
 

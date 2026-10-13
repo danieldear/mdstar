@@ -1251,6 +1251,9 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
             }
         })
         .font_family(family)
+        // Rendered text can be selected and copied (⌘C, ⌘A, right-click).
+        .selectable(true)
+        .on_select_text(App::text_selected)
         .flex(1.)
         .into()
 }

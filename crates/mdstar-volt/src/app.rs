@@ -184,6 +184,9 @@ pub struct App {
     /// A `/` the reader dismissed with Escape, so it stays closed.
     slash_dismissed: Option<usize>,
 
+    /// Text selected in the rendered document.
+    pub selected_text: String,
+
     /// Which pane led the last scroll sync, and when: the other pane's echo
     /// of that scroll is not synced back.
     sync: Option<(Pane, std::time::Instant)>,
@@ -1156,8 +1159,136 @@ impl App {
 
     // Context menus
 
+    /// A right-click: the native menu on macOS (in the running app), the
+    /// in-window menu otherwise.
     pub fn open_menu(&mut self, target: MenuTarget, at: [f32; 2]) {
+        #[cfg(target_os = "macos")]
+        if self.sender.is_some() {
+            self.native_menu(target);
+            return;
+        }
         self.menu = Some((target, at));
+    }
+
+    /// Text selected in the rendered document changed.
+    pub fn text_selected(&mut self, text: String) {
+        #[cfg(target_os = "macos")]
+        {
+            crate::macos::offer_selection_to_services();
+            crate::macos::set_selection(&text);
+        }
+        self.selected_text = text;
+    }
+
+    #[cfg(target_os = "macos")]
+    fn native_menu(&mut self, target: MenuTarget) {
+        use crate::macos::{self, Entry};
+        let item = |title: &str, tag: u8| Entry::Item {
+            title: title.into(),
+            tag: isize::from(tag),
+            enabled: true,
+        };
+        let mut entries = Vec::new();
+        let selected = self.selected_text.trim().to_owned();
+        let quoted = {
+            let short: String = selected.chars().take(24).collect();
+            if short.len() < selected.len() { format!("“{short}…”") } else { format!("“{short}”") }
+        };
+        if matches!(target, MenuTarget::Row(_)) && !selected.is_empty() {
+            entries.extend([
+                item("Copy", text_action::COPY),
+                item(&format!("Look Up {quoted}"), text_action::LOOK_UP),
+                item(&format!("Translate {quoted}"), text_action::TRANSLATE),
+                item("Search with Google", text_action::SEARCH),
+                Entry::Separator,
+                item("Share…", text_action::SHARE),
+                Entry::Submenu {
+                    title: "Speech".into(),
+                    items: vec![
+                        item("Start Speaking", text_action::SPEAK),
+                        item("Stop Speaking", text_action::STOP_SPEAKING),
+                    ],
+                },
+                Entry::Services,
+                Entry::Separator,
+            ]);
+        }
+        match &target {
+            MenuTarget::Row(row) => {
+                let units = self.doc.as_ref().map(Doc::units).unwrap_or_default();
+                let unit = units.get(*row);
+                if unit.is_some_and(|u| u.code().is_some()) {
+                    entries.push(item("Copy Code", action::COPY_CODE));
+                } else {
+                    entries.push(item("Copy Block", action::COPY_TEXT));
+                }
+                if unit.is_some_and(|u| u.heading().is_some()) {
+                    entries.push(item("Copy Link to Section", action::COPY_LINK));
+                }
+                entries.extend([
+                    Entry::Separator,
+                    item("Find…", action::FIND),
+                    item(if self.editing() { "Stop Editing" } else { "Edit" }, text_action::EDIT),
+                    Entry::Separator,
+                    item("Reload", action::RELOAD),
+                    item("Reveal in Finder", action::REVEAL),
+                ]);
+            }
+            MenuTarget::File(path) => {
+                if path.is_dir() {
+                    entries.push(item("Expand or Collapse", file_action::OPEN));
+                } else {
+                    entries.extend([
+                        item("Open", file_action::OPEN),
+                        item("Open in New Tab", file_action::OPEN_TAB),
+                        Entry::Separator,
+                    ]);
+                }
+                entries.extend([
+                    item("Reveal in Finder", file_action::REVEAL),
+                    item("Copy Path", file_action::COPY_PATH),
+                ]);
+                if self.tree.iter().any(|r| r.path == *path) {
+                    entries.push(item("Refresh", file_action::REFRESH));
+                    if self.is_workspace_folder(path) {
+                        entries.extend([Entry::Separator, item("Remove from Workspace", file_action::REMOVE)]);
+                    }
+                }
+            }
+            MenuTarget::Heading(_) => entries.extend([
+                item("Go to Section", heading_action::GO),
+                item("Copy Link to Section", heading_action::COPY_LINK),
+                item("Copy Title", heading_action::COPY_TITLE),
+            ]),
+            MenuTarget::Tab(_) => entries.extend([
+                item("Close Tab", tab_action::CLOSE),
+                item("Close Other Tabs", tab_action::CLOSE_OTHERS),
+                Entry::Separator,
+                item("Copy Path", tab_action::COPY_PATH),
+                item("Reveal in Finder", tab_action::REVEAL),
+            ]),
+        }
+        let Some((tag, anchor)) = macos::popup(&entries) else { return };
+        let Ok(tag) = u8::try_from(tag) else { return };
+        match tag {
+            text_action::COPY => self.copy(&selected, None),
+            text_action::LOOK_UP => macos::look_up(&selected, &anchor),
+            text_action::TRANSLATE => open_external(&format!(
+                "https://translate.google.com/?sl=auto&op=translate&text={}",
+                encode(&selected)
+            )),
+            text_action::SEARCH => open_external(&format!("https://www.google.com/search?q={}", encode(&selected))),
+            text_action::SHARE => macos::share(&selected, &anchor),
+            text_action::SPEAK => macos::speak(&selected),
+            text_action::STOP_SPEAKING => macos::stop_speaking(),
+            text_action::EDIT => self.toggle_edit(),
+            _ => match target {
+                MenuTarget::Row(row) => self.row_action(row, tag),
+                MenuTarget::File(path) => self.file_action(path, tag),
+                MenuTarget::Heading(row) => self.heading_action(row, tag),
+                MenuTarget::Tab(i) => self.tab_action(i, tag),
+            },
+        }
     }
 
     pub fn row_action(&mut self, row: usize, id: u8) {
@@ -1257,6 +1388,33 @@ impl App {
             _ => {}
         }
     }
+}
+
+/// Native menu actions on selected text (tags apart from row actions).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod text_action {
+    pub const COPY: u8 = 100;
+    pub const LOOK_UP: u8 = 101;
+    pub const TRANSLATE: u8 = 102;
+    pub const SEARCH: u8 = 103;
+    pub const SHARE: u8 = 104;
+    pub const SPEAK: u8 = 105;
+    pub const STOP_SPEAKING: u8 = 106;
+    pub const EDIT: u8 = 107;
+}
+
+/// Percent-encode text for a URL query.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn encode(text: &str) -> String {
+    let mut out = String::new();
+    for b in text.bytes().take(2000) {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// File tree context menu actions.

@@ -577,11 +577,13 @@ fn list_item(list: &BlockIr, index: usize, ctx: &Ctx, depth: usize) -> Element<A
             .color(ColorToken::Muted)
             .font_size(t.size)
             .line_height(t.line)
+            .selectable(false)
             .into(),
         None => text(if depth.is_multiple_of(2) { "•" } else { "◦" })
             .color(ColorToken::Muted)
             .font_size(t.size)
             .line_height(t.line)
+            .selectable(false)
             .into(),
     };
     let body: Vec<Element<App>> = item
@@ -645,7 +647,8 @@ fn code_part(
                     .font_size(10.5)
                     .font_weight(600)
                     .letter_spacing(0.06)
-                    .color(ColorToken::Muted),
+                    .color(ColorToken::Muted)
+                    .selectable(false),
                 spacer(),
                 button(if copied { "Copied" } else { "Copy" })
                     .key(format!("{key}-copy"))
@@ -668,6 +671,7 @@ fn code_part(
     let code = if code.is_empty() { " " } else { code };
     let language = block.language.as_deref().unwrap_or(if block.kind == "math" { "latex" } else { "" });
     let body = styled(code, syntax_runs(language, code, ctx.dark), ctx, &t.code_family)
+        .key(format!("{key}-text-{part}"))
         .font_family(t.code_family.clone())
         .font_size(t.code_size())
         .line_height(1.55)
@@ -684,6 +688,7 @@ fn code_part(
                 .no_wrap(true)
                 .text_align(TextAlign::End)
                 .color(ColorToken::Muted.alpha(70))
+                .selectable(false)
                 .width(gutter_width(first_line + lines, t.code_size()))
                 .flex(0.),
             vstack![body].flex(1.).clip_contents(true),
@@ -780,10 +785,13 @@ fn table_part(table: &BlockIr, rows: Range<usize>, first: bool, last: bool, ctx:
     let size = (ctx.typo.size * 0.875).round();
     let total = table.rows.len();
     let mut cells: Vec<Element<App>> = Vec::new();
-    let mut row = |cols: &[Vec<InlineIr>], header: bool, rule: bool| {
+    let table_key = key_of(&table.id);
+    let mut row = |cols: &[Vec<InlineIr>], header: bool, rule: bool, r: usize| {
         for i in 0..columns {
             let inlines = cols.get(i).map(Vec::as_slice).unwrap_or(&[]);
-            let mut text = paragraph(inlines, size, ctx).line_height(1.5);
+            let mut text = paragraph(inlines, size, ctx)
+                .key(format!("{table_key}-cell-{r}-{i}"))
+                .line_height(1.5);
             if header {
                 text = text.font_weight(600);
             }
@@ -803,10 +811,10 @@ fn table_part(table: &BlockIr, rows: Range<usize>, first: bool, last: bool, ctx:
         }
     };
     if first {
-        row(&table.headers, true, total > 0);
+        row(&table.headers, true, total > 0, 0);
     }
     for r in rows.clone() {
-        row(&table.rows[r], false, r + 1 < total);
+        row(&table.rows[r], false, r + 1 < total, r + 1);
     }
     let sides = match (first, last) {
         (true, true) => Sides::ALL,
