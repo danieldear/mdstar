@@ -1,0 +1,23 @@
+[package]
+name = "mdstar-volt"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+description = "MD Star reader drawn natively with Volt UI Kit"
+publish = false
+
+# Standalone until Volt UI Kit is published: it depends on a local checkout of
+# the kit, so it stays outside the main workspace and its CI.
+[workspace]
+
+[[bin]]
+name = "mdstar-volt"
+path = "src/main.rs"
+
+[dependencies]
+mdstar-core = { path = "../mdstar-core" }
+volt-ui-kit = { path = "../../../rust/volt-ui-kit", features = ["native-gpu", "native-desktop"] }
+
+[profile.dev.package."*"]
+opt-level = 3

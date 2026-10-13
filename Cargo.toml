@@ -6,6 +6,8 @@ members = [
   "crates/mdstar-app",
   "crates/mdstar-ffi",
 ]
+# Standalone: depends on a local Volt UI Kit checkout until it is published.
+exclude = ["crates/mdstar-volt"]
 resolver = "2"
 
 [workspace.package]
