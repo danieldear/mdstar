@@ -1410,6 +1410,8 @@ name = "mdstar-volt"
 version = "0.1.0"
 dependencies = [
  "mdstar-core",
+ "serde",
+ "serde_json",
  "volt-ui-kit",
 ]
 

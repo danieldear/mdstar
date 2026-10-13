@@ -4,38 +4,108 @@
 //! list: only the units near the viewport are built, so documents of any
 //! length render. Long lists, tables and code blocks split into several
 //! units so no single row grows past the element budget.
+//!
+//! Every text a row shows comes from [`unit_texts`] in the same order the
+//! row renders it, so find can count matches without building rows and the
+//! renderer can highlight the same matches.
 
-use std::{collections::HashMap, ops::Range};
+use std::{cell::Cell, collections::HashMap, ops::Range};
 
 use mdstar_core::document_ir::{BlockIr, InlineIr};
 use volt_ui_kit::{graphics::Image, ui::prelude::*};
 
-use crate::App;
+use crate::{App, find::Hit};
 
 /// Each text element holds at most 8 KiB.
 const TEXT_LIMIT: usize = 8000;
-pub const BODY: f32 = 16.;
-const LINE: f32 = 1.7;
-pub const MEASURE: f32 = 680.;
-const CODE_SIZE: f32 = 13.;
-const CODE_LINE: f32 = CODE_SIZE * 1.2;
-const CODE_HEADER: f32 = 34.;
 /// Rows per table unit and lines per code unit.
 const TABLE_ROWS: usize = 40;
 const CODE_LINES: usize = 80;
-/// Space between ordinary blocks, and before each heading level.
-const BLOCK_GAP: f32 = 16.;
-/// Width of the list marker column; list text starts GUTTER + 10 in.
-const GUTTER: f32 = 22.;
-const HEADING_GAP: [f32; 6] = [32., 34., 24., 18., 14., 14.];
+const CODE_HEADER: f32 = 34.;
+/// Heading sizes relative to the body size, H1 to H6.
+const HEADING_SCALE: [f32; 6] = [2.0, 1.5, 1.25, 1.1, 1.0, 0.9];
+/// Space above each heading level, in body sizes.
+const HEADING_GAP: [f32; 6] = [2.0, 2.1, 1.6, 1.3, 1.1, 1.1];
 pub const MARGIN_X: f32 = 56.;
 pub const MARGIN_TOP: f32 = 44.;
-pub const MARGIN_BOTTOM: f32 = 96.;
+pub const MARGIN_BOTTOM: f32 = 120.;
+
+/// Typography from the reader's settings.
+pub struct Typography {
+    pub size: f32,
+    pub line: f32,
+    pub measure: f32,
+    pub family: String,
+    pub code_family: String,
+}
+
+impl Typography {
+    fn code_size(&self) -> f32 {
+        (self.size * 0.82).round().max(10.)
+    }
+    fn code_line(&self) -> f32 {
+        self.code_size() * 1.55
+    }
+    fn heading_size(&self, level: usize) -> f32 {
+        (self.size * HEADING_SCALE[level - 1]).round()
+    }
+    fn gap(&self) -> f32 {
+        self.size
+    }
+    /// The list marker column; list text starts this far in plus the gap.
+    fn gutter(&self) -> f32 {
+        (self.size * 1.4).round()
+    }
+}
+
+/// Find matches to highlight while rendering.
+pub struct Highlight<'a> {
+    pub needle: &'a [char],
+    pub current: Option<Hit>,
+    pub mark: &'a str,
+    pub mark_current: &'a str,
+    /// The row being rendered and the matches already shown in it.
+    row: Cell<usize>,
+    seen: Cell<usize>,
+}
+
+impl<'a> Highlight<'a> {
+    pub fn new(needle: &'a [char], current: Option<Hit>, mark: &'a str, mark_current: &'a str) -> Self {
+        Self {
+            needle,
+            current,
+            mark,
+            mark_current,
+            row: Cell::new(0),
+            seen: Cell::new(0),
+        }
+    }
+
+    /// Matches in the next text of the row, as (byte range, is current).
+    fn take(&self, text: &str) -> Vec<(Range<usize>, bool)> {
+        let found = crate::find::matches(text, self.needle);
+        let first = self.seen.get();
+        self.seen.set(first + found.len());
+        let row = self.row.get();
+        found
+            .into_iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let current = self.current == Some(Hit { row, nth: first + i });
+                (r, current)
+            })
+            .collect()
+    }
+}
 
 pub struct Ctx<'a> {
     pub images: &'a HashMap<String, Image>,
     /// The code block whose Copy button was pressed last.
     pub copied: Option<&'a str>,
+    pub typo: Typography,
+    pub find: Option<Highlight<'a>>,
+    /// The row whose context menu is open, and where.
+    pub menu: Option<(usize, [f32; 2])>,
 }
 
 /// One row of the virtualised document.
@@ -57,6 +127,23 @@ pub enum Unit<'a> {
         part: usize,
         last: bool,
     },
+}
+
+impl Unit<'_> {
+    /// The heading block, if this unit is one.
+    pub fn heading(&self) -> Option<&BlockIr> {
+        match self {
+            Unit::Block(b) if b.kind == "heading" => Some(b),
+            _ => None,
+        }
+    }
+    /// The whole code block, if this unit is part of one.
+    pub fn code(&self) -> Option<&BlockIr> {
+        match self {
+            Unit::Code { block, .. } => Some(block),
+            _ => None,
+        }
+    }
 }
 
 /// Split a document into units.
@@ -92,12 +179,7 @@ pub fn units(blocks: &[BlockIr]) -> Vec<Unit<'_>> {
                 }
             }
             "code" | "math" => {
-                let source = if block.kind == "math" {
-                    block.raw.as_deref().unwrap_or("")
-                } else {
-                    block.code.as_deref().unwrap_or("")
-                };
-                let parts = chunks(source);
+                let parts = chunks(code_source(block));
                 let count = parts.len();
                 for (part, text) in parts.into_iter().enumerate() {
                     out.push(Unit::Code {
@@ -114,18 +196,26 @@ pub fn units(blocks: &[BlockIr]) -> Vec<Unit<'_>> {
     out
 }
 
+fn code_source(block: &BlockIr) -> &str {
+    if block.kind == "math" {
+        block.raw.as_deref().unwrap_or("")
+    } else {
+        block.code.as_deref().unwrap_or("")
+    }
+}
+
 /// Vertical space above unit `i`.
-pub fn space_above(units: &[Unit], i: usize) -> f32 {
+pub fn space_above(units: &[Unit], i: usize, t: &Typography) -> f32 {
     if i == 0 {
         return 0.;
     }
     match &units[i] {
-        Unit::Item { index, .. } if *index > 0 => 6.,
+        Unit::Item { index, .. } if *index > 0 => (t.size * 0.4).round(),
         Unit::Table { first: false, .. } | Unit::Code { part: 1.., .. } => 0.,
         Unit::Block(b) if b.kind == "heading" => {
-            HEADING_GAP[usize::from(b.level.unwrap_or(1).clamp(1, 6)) - 1]
+            (t.size * HEADING_GAP[usize::from(b.level.unwrap_or(1).clamp(1, 6)) - 1]).round()
         }
-        _ => BLOCK_GAP,
+        _ => t.gap(),
     }
 }
 
@@ -139,9 +229,44 @@ pub fn unit_key(units: &[Unit], i: usize) -> String {
     }
 }
 
+/// Context menu actions for a document row.
+pub mod action {
+    pub const COPY_TEXT: u8 = 0;
+    pub const COPY_LINK: u8 = 1;
+    pub const COPY_CODE: u8 = 2;
+    pub const FIND: u8 = 3;
+    pub const RELOAD: u8 = 5;
+    pub const REVEAL: u8 = 6;
+}
+
+fn row_menu(unit: &Unit) -> Vec<MenuItem<u8>> {
+    let mut items = Vec::new();
+    if unit.code().is_some() {
+        items.push(menu_item(action::COPY_CODE, "Copy Code").icon(Icon::Copy));
+    } else {
+        items.push(menu_item(action::COPY_TEXT, "Copy Text").icon(Icon::Copy));
+    }
+    if unit.heading().is_some() {
+        items.push(menu_item(action::COPY_LINK, "Copy Link to Section").icon(Icon::Link));
+    }
+    items.extend([
+        menu_separator(),
+        menu_item(action::FIND, "Find…").shortcut("⌘F").icon(Icon::Search),
+        menu_separator(),
+        menu_item(action::RELOAD, "Reload").shortcut("⌘R").icon(Icon::Refresh),
+        menu_item(action::REVEAL, "Reveal in Finder").icon(Icon::Folder),
+    ]);
+    items
+}
+
 /// Row `i` of the document: the unit, centred on the reading measure, with
-/// its spacing and the page margins.
+/// its spacing, the page margins and its context menu.
 pub fn row(units: &[Unit], i: usize, ctx: &Ctx) -> Element<App> {
+    if let Some(find) = &ctx.find {
+        find.row.set(i);
+        find.seen.set(0);
+    }
+    let t = &ctx.typo;
     let content = match &units[i] {
         Unit::Block(b) => block_element(b, ctx, 0),
         Unit::Item { list, index } => list_item(list, *index, ctx, 0),
@@ -158,7 +283,7 @@ pub fn row(units: &[Unit], i: usize, ctx: &Ctx) -> Element<App> {
             last,
         } => code_part(block, text, *part, *last, ctx),
     };
-    let mut top = space_above(units, i);
+    let mut top = space_above(units, i, t);
     let mut bottom = 0.;
     if i == 0 {
         top += MARGIN_TOP;
@@ -166,38 +291,50 @@ pub fn row(units: &[Unit], i: usize, ctx: &Ctx) -> Element<App> {
     if i + 1 == units.len() {
         bottom += MARGIN_BOTTOM;
     }
-    vstack![vstack![content].width_fraction(1.).max_width(MEASURE)]
-        .key(unit_key(units, i))
+    let page = vstack![vstack![content].width_fraction(1.).max_width(t.measure)]
+        .key(format!("{}-page", unit_key(units, i)))
         .align(Align::Center)
         .padding(MARGIN_X, Edge::Horizontal)
         .padding(top, Edge::Top)
-        .padding(bottom, Edge::Bottom)
+        .padding(bottom, Edge::Bottom);
+    let open = ctx.menu.filter(|(row, _)| *row == i);
+    context_menu(page, row_menu(&units[i]))
+        .key(unit_key(units, i))
+        .open(open.is_some())
+        .position(open.map_or([0.; 2], |(_, at)| at))
+        .on_context_open(move |app: &mut App, at| app.open_menu(crate::app::MenuTarget::Row(i), at))
+        .on_open_change(|app: &mut App, open| {
+            if !open {
+                app.menu = None;
+            }
+        })
+        .on_action(move |app: &mut App, id| app.row_action(i, id))
         .into()
 }
 
 /// An estimate of row `i`'s height, refined once the row is measured.
-pub fn estimate(units: &[Unit], i: usize, images: &HashMap<String, Image>) -> f32 {
+pub fn estimate(units: &[Unit], i: usize, images: &HashMap<String, Image>, t: &Typography) -> f32 {
     let text = |chars: usize, size: f32, line: f32| {
-        let per_line = (MEASURE / (size * 0.5)).max(10.);
+        let per_line = (t.measure / (size * 0.5)).max(10.);
         (chars as f32 / per_line).ceil().max(1.) * size * line
     };
     let body = match &units[i] {
-        Unit::Block(b) => block_estimate(b, images, &text),
+        Unit::Block(b) => block_estimate(b, images, &text, t),
         Unit::Item { list, index } => list.items[*index]
             .children
             .iter()
-            .map(|c| block_estimate(c, images, &text))
+            .map(|c| block_estimate(c, images, &text, t))
             .sum(),
         Unit::Table { rows, first, .. } => {
-            rows.len() as f32 * 41. + if *first { 41. } else { 0. }
+            (rows.len() + usize::from(*first)) as f32 * (t.size * 0.875 * 1.5 + 19.)
         }
         Unit::Code { text, part, .. } => {
-            text.lines().count().max(1) as f32 * CODE_LINE
-                + 22.
+            text.lines().count().max(1) as f32 * t.code_line()
+                + 28.
                 + if *part == 0 { CODE_HEADER } else { 0. }
         }
     };
-    let mut extra = space_above(units, i);
+    let mut extra = space_above(units, i, t);
     if i == 0 {
         extra += MARGIN_TOP;
     }
@@ -207,25 +344,40 @@ pub fn estimate(units: &[Unit], i: usize, images: &HashMap<String, Image>) -> f3
     (body + extra).max(1.)
 }
 
-fn block_estimate(b: &BlockIr, images: &HashMap<String, Image>, text: &dyn Fn(usize, f32, f32) -> f32) -> f32 {
+fn block_estimate(
+    b: &BlockIr,
+    images: &HashMap<String, Image>,
+    text: &dyn Fn(usize, f32, f32) -> f32,
+    t: &Typography,
+) -> f32 {
     match b.kind.as_str() {
         "heading" => {
-            let size = [32., 24., 19., 16.5, 15., 14.][usize::from(b.level.unwrap_or(1).clamp(1, 6)) - 1];
-            text(plain_len(&b.inlines), size, 1.25)
+            let level = usize::from(b.level.unwrap_or(1).clamp(1, 6));
+            text(plain_len(&b.inlines), t.heading_size(level), 1.25)
         }
         "paragraph" => match lone_image(&b.inlines).and_then(|i| images.get(i.url.as_deref()?)) {
             Some(img) => {
                 let (w, h) = (img.width() as f32, img.height() as f32);
-                let width = image_width(w);
+                let width = image_width(w, t.measure);
                 width * h / w.max(1.) + 40.
             }
-            None => text(plain_len(&b.inlines), BODY, LINE),
+            None => text(plain_len(&b.inlines), t.size, t.line),
         },
-        "blockquote" => b.children.iter().map(|c| block_estimate(c, images, text) + 10.).sum(),
+        "blockquote" => b
+            .children
+            .iter()
+            .map(|c| block_estimate(c, images, text, t) + 10.)
+            .sum(),
         "list" => b
             .items
             .iter()
-            .map(|item| item.children.iter().map(|c| block_estimate(c, images, text)).sum::<f32>() + 6.)
+            .map(|item| {
+                item.children
+                    .iter()
+                    .map(|c| block_estimate(c, images, text, t))
+                    .sum::<f32>()
+                    + 6.
+            })
             .sum(),
         "thematic_break" => 30.,
         _ => text(b.raw.as_deref().map_or(40, str::len), 12., 1.4),
@@ -239,15 +391,75 @@ fn plain_len(inlines: &[InlineIr]) -> usize {
         .sum()
 }
 
+/// The texts unit `unit` shows, in the order it renders them.
+pub fn unit_texts(unit: &Unit) -> Vec<String> {
+    let mut out = Vec::new();
+    match unit {
+        Unit::Block(b) => block_texts(b, &mut out),
+        Unit::Item { list, index } => {
+            for child in &list.items[*index].children {
+                block_texts(child, &mut out);
+            }
+        }
+        Unit::Table {
+            table, rows, first, ..
+        } => table_texts(table, rows.clone(), *first, &mut out),
+        Unit::Code { text, .. } => out.push(text.clone()),
+    }
+    out
+}
+
+fn block_texts(b: &BlockIr, out: &mut Vec<String>) {
+    match b.kind.as_str() {
+        "heading" => out.push(inline_text(&b.inlines)),
+        "paragraph" => {
+            if lone_image(&b.inlines).is_none() {
+                out.push(inline_text(&b.inlines));
+            }
+        }
+        "blockquote" => b.children.iter().for_each(|c| block_texts(c, out)),
+        "list" => b
+            .items
+            .iter()
+            .flat_map(|i| &i.children)
+            .for_each(|c| block_texts(c, out)),
+        "code" | "math" => out.extend(chunks(code_source(b))),
+        "table" => table_texts(b, 0..b.rows.len(), true, out),
+        "html" => out.push(clip(b.raw.as_deref().unwrap_or("").trim(), TEXT_LIMIT).to_owned()),
+        _ => {}
+    }
+}
+
+fn table_texts(table: &BlockIr, rows: Range<usize>, first: bool, out: &mut Vec<String>) {
+    let columns = table_columns(table);
+    let mut row = |cells: &[Vec<InlineIr>]| {
+        for i in 0..columns {
+            out.push(inline_text(cells.get(i).map(Vec::as_slice).unwrap_or(&[])));
+        }
+    };
+    if first {
+        row(&table.headers);
+    }
+    for r in rows {
+        row(&table.rows[r]);
+    }
+}
+
+/// A paragraph's text exactly as the renderer shows it.
+fn inline_text(inlines: &[InlineIr]) -> String {
+    pieces(inlines).into_iter().map(|(text, _)| text).collect()
+}
+
 fn block_element(block: &BlockIr, ctx: &Ctx, depth: usize) -> Element<App> {
     let key = key_of(&block.id);
+    let t = &ctx.typo;
     match block.kind.as_str() {
-        "heading" => heading(block, key),
+        "heading" => heading(block, key, ctx),
         "paragraph" => {
             if let Some(image) = lone_image(&block.inlines) {
                 return image_block(image, key, ctx);
             }
-            paragraph(&block.inlines, BODY).key(key).into()
+            paragraph(&block.inlines, t.size, ctx).key(key).into()
         }
         "blockquote" => {
             let children: Vec<Element<App>> = block
@@ -259,9 +471,9 @@ fn block_element(block: &BlockIr, ctx: &Ctx, depth: usize) -> Element<App> {
                 vstack![]
                     .width(3.)
                     .flex(0.)
-                    .background(ColorToken::Primary.alpha(45))
+                    .background(ColorToken::Primary.alpha(50))
                     .rounded(2.),
-                vstack(children).gap(10., Axis::Vertical).flex(1.),
+                vstack(children).gap(t.gap() * 0.6, Axis::Vertical).flex(1.),
             ]
             .key(key)
             .gap(16., Axis::Horizontal)
@@ -276,17 +488,12 @@ fn block_element(block: &BlockIr, ctx: &Ctx, depth: usize) -> Element<App> {
                 .collect();
             vstack(items)
                 .key(key)
-                .gap(6., Axis::Vertical)
+                .gap((t.size * 0.4).round(), Axis::Vertical)
                 .into()
         }
         // Nested code (inside lists and quotes) renders whole.
         "code" | "math" => {
-            let source = if block.kind == "math" {
-                block.raw.as_deref().unwrap_or("")
-            } else {
-                block.code.as_deref().unwrap_or("")
-            };
-            let parts = chunks(source);
+            let parts = chunks(code_source(block));
             let count = parts.len();
             let parts: Vec<Element<App>> = parts
                 .iter()
@@ -298,46 +505,53 @@ fn block_element(block: &BlockIr, ctx: &Ctx, depth: usize) -> Element<App> {
         "table" => table_part(block, 0..block.rows.len(), true, true, ctx),
         "thematic_break" => vstack![divider().background(ColorToken::Border)]
             .key(key)
-            .padding(14., Edge::Vertical)
+            .padding(t.size * 0.9, Edge::Vertical)
             .into(),
-        "html" => text(clip(block.raw.as_deref().unwrap_or("").trim(), TEXT_LIMIT))
-            .key(key)
-            .font_family("SF Mono")
-            .font_size(12.)
-            .color(ColorToken::Muted)
-            .into(),
+        "html" => {
+            let raw = clip(block.raw.as_deref().unwrap_or("").trim(), TEXT_LIMIT);
+            marked(raw, vec![(raw.len(), None)], ctx)
+                .key(key)
+                .font_family(t.code_family.clone())
+                .font_size(t.code_size())
+                .color(ColorToken::Muted)
+                .into()
+        }
         _ => vstack![].key(key).into(),
     }
 }
 
-fn heading(block: &BlockIr, key: String) -> Element<App> {
+fn heading(block: &BlockIr, key: String, ctx: &Ctx) -> Element<App> {
     let level = usize::from(block.level.unwrap_or(1).clamp(1, 6));
-    let size = [32., 24., 19., 16.5, 15., 14.][level - 1];
-    paragraph(&block.inlines, size)
+    let t = &ctx.typo;
+    let system = t.family == "SF";
+    paragraph(&block.inlines, t.heading_size(level), ctx)
         .key(key)
-        .font_family("SF Pro Display")
         .font_weight(if level <= 2 { 700 } else { 600 })
-        .letter_spacing(if level <= 2 { -0.012 } else { 0. })
+        .letter_spacing(if system && level <= 2 { -0.012 } else { 0. })
         .line_height(1.25)
+        .color(if level >= 5 { ColorToken::Muted } else { ColorToken::BaseContent })
         .into()
 }
 
 fn list_item(list: &BlockIr, index: usize, ctx: &Ctx, depth: usize) -> Element<App> {
+    let t = &ctx.typo;
     let ordered = list.ordered.unwrap_or(false);
     let item = &list.items[index];
     // Bullets, numbers and checkboxes share one right-aligned gutter so
     // every kind of list indents its text by the same amount.
     let marker: Element<App> = match item.checked {
-        Some(done) => vstack![task_box(done)].padding(6., Edge::Top).into(),
+        Some(done) => vstack![task_box(done)]
+            .padding(((t.size * t.line - 16.) / 2.).max(0.), Edge::Top)
+            .into(),
         None if ordered => text(format!("{}.", list.start.unwrap_or(1) as usize + index))
             .color(ColorToken::Muted)
-            .font_size(BODY)
-            .line_height(LINE)
+            .font_size(t.size)
+            .line_height(t.line)
             .into(),
         None => text(if depth.is_multiple_of(2) { "•" } else { "◦" })
             .color(ColorToken::Muted)
-            .font_size(BODY)
-            .line_height(LINE)
+            .font_size(t.size)
+            .line_height(t.line)
             .into(),
     };
     let body: Vec<Element<App>> = item
@@ -346,8 +560,8 @@ fn list_item(list: &BlockIr, index: usize, ctx: &Ctx, depth: usize) -> Element<A
         .map(|b| block_element(b, ctx, depth + 1))
         .collect();
     hstack![
-        vstack![marker].width(GUTTER).align(Align::End).flex(0.),
-        vstack(body).gap(6., Axis::Vertical).flex(1.),
+        vstack![marker].width(t.gutter()).align(Align::End).flex(0.),
+        vstack(body).gap((t.size * 0.4).round(), Axis::Vertical).flex(1.),
     ]
     .key(key_of(&item.id))
     .gap(10., Axis::Horizontal)
@@ -376,16 +590,13 @@ fn task_box(done: bool) -> Element<App> {
 /// Copy button for the whole block; parts join into one rounded frame.
 fn code_part(block: &BlockIr, code: &str, part: usize, last: bool, ctx: &Ctx) -> Element<App> {
     let key = key_of(&block.id);
+    let t = &ctx.typo;
     let first = part == 0;
     let mut parts: Vec<Element<App>> = Vec::new();
     if first {
         let copied = ctx.copied == Some(key.as_str());
-        let source = if block.kind == "math" {
-            block.raw.clone().unwrap_or_default()
-        } else {
-            block.code.clone().unwrap_or_default()
-        };
         let id = key.clone();
+        let source = code_source(block).to_owned();
         let language = if block.kind == "math" {
             "math"
         } else {
@@ -405,14 +616,10 @@ fn code_part(block: &BlockIr, code: &str, part: usize, last: bool, ctx: &Ctx) ->
                     .size(ControlSize::Small)
                     .font_size(12.)
                     .color(if copied { ColorToken::Success } else { ColorToken::Muted })
-                    .on_click(move |app: &mut App| {
-                        if volt_ui_kit::native::clipboard::set_text(&source).is_ok() {
-                            app.copied = Some(id.clone());
-                        }
-                    }),
+                    .on_click(move |app: &mut App| app.copy(&source, Some(id.clone()))),
             ]
             .height(CODE_HEADER)
-            .padding(10., Edge::Left)
+            .padding(14., Edge::Left)
             .padding(6., Edge::Right)
             .align(Align::Center)
             .border_sides(Sides::BOTTOM)
@@ -421,21 +628,17 @@ fn code_part(block: &BlockIr, code: &str, part: usize, last: bool, ctx: &Ctx) ->
             .into(),
         );
     }
-    let lines = code.lines().count().max(1) as f32;
-    // Read-only text area: selectable, Cmd/Ctrl+C copies a selection.
+    let code = if code.is_empty() { " " } else { code };
     parts.push(
-        text_area(code)
-            .key(format!("{key}-code-{part}"))
-            .read_only(true)
-            .on_change(|_: &mut App, _| {})
-            .fill_width()
-            .height(lines * CODE_LINE + if first && last { 22. } else { 12. })
-            .font_family("SF Mono")
-            .font_size(CODE_SIZE)
-            .background("#00000000")
-            .border_width(0.)
-            .rounded(0.)
-            .into(),
+        vstack![marked(code, vec![(code.len(), None)], ctx)
+            .font_family(t.code_family.clone())
+            .font_size(t.code_size())
+            .line_height(1.55)]
+        .key(format!("{key}-code-{part}"))
+        .padding(16., Edge::Horizontal)
+        .padding(if first { 12. } else { 0. }, Edge::Top)
+        .padding(if last { 14. } else { 0. }, Edge::Bottom)
+        .into(),
     );
     let sides = match (first, last) {
         (true, true) => Sides::ALL,
@@ -466,29 +669,28 @@ fn corners(first: bool, last: bool) -> Vec<Corner> {
     out
 }
 
-/// Table rows `rows` (with the header on the first part); parts join into
-/// one rounded frame and share column widths.
-fn table_part(
-    table: &BlockIr,
-    rows: Range<usize>,
-    first: bool,
-    last: bool,
-    _ctx: &Ctx,
-) -> Element<App> {
-    let columns = table
+fn table_columns(table: &BlockIr) -> usize {
+    table
         .rows
         .iter()
         .map(Vec::len)
         .chain([table.headers.len()])
         .max()
         .unwrap_or(0)
-        .max(1);
+        .max(1)
+}
+
+/// Table rows `rows` (with the header on the first part); parts join into
+/// one rounded frame and share column widths.
+fn table_part(table: &BlockIr, rows: Range<usize>, first: bool, last: bool, ctx: &Ctx) -> Element<App> {
+    let columns = table_columns(table);
+    let size = (ctx.typo.size * 0.875).round();
     let total = table.rows.len();
     let mut cells: Vec<Element<App>> = Vec::new();
     let mut row = |cols: &[Vec<InlineIr>], header: bool, rule: bool| {
         for i in 0..columns {
             let inlines = cols.get(i).map(Vec::as_slice).unwrap_or(&[]);
-            let mut text = paragraph(inlines, 14.).line_height(1.5);
+            let mut text = paragraph(inlines, size, ctx).line_height(1.5);
             if header {
                 text = text.font_weight(600);
             }
@@ -531,8 +733,8 @@ fn table_part(
 }
 
 /// Retina screenshots are usually 2x: show them at their point size.
-fn image_width(w: f32) -> f32 {
-    (w / 2.).max(w.min(320.)).min(MEASURE)
+fn image_width(w: f32, measure: f32) -> f32 {
+    (w / 2.).max(w.min(320.)).min(measure)
 }
 
 fn image_block(image: &InlineIr, key: String, ctx: &Ctx) -> Element<App> {
@@ -541,7 +743,7 @@ fn image_block(image: &InlineIr, key: String, ctx: &Ctx) -> Element<App> {
     match ctx.images.get(url) {
         Some(img) => {
             let (w, h) = (img.width() as f32, img.height() as f32);
-            let width = image_width(w);
+            let width = image_width(w, ctx.typo.measure);
             let mut parts: Vec<Element<App>> = vec![vstack![]
                 .width(width)
                 .height(width * h / w.max(1.))
@@ -576,30 +778,83 @@ fn image_block(image: &InlineIr, key: String, ctx: &Ctx) -> Element<App> {
     }
 }
 
-/// A paragraph's inlines as one rich text, cut at a text element's 8 KiB.
-fn paragraph(inlines: &[InlineIr], size: f32) -> volt_ui_kit::ui::Text<App> {
-    let mut out = Vec::new();
-    spans(inlines, Style::default(), &mut out);
+/// A paragraph's inlines as one rich text, cut at a text element's 8 KiB,
+/// with find matches highlighted.
+fn paragraph(inlines: &[InlineIr], size: f32, ctx: &Ctx) -> volt_ui_kit::ui::Text<App> {
+    let out = pieces(inlines);
     let has_links = out.iter().any(|(_, s)| s.link.is_some());
-    let mut used = 0;
-    let mut kept = Vec::with_capacity(out.len());
-    for (text, style) in out {
-        if used + text.len() > TEXT_LIMIT {
-            let cut = clip(&text, TEXT_LIMIT.saturating_sub(used));
-            if !cut.is_empty() {
-                kept.push(style.span(format!("{cut}…")));
-            }
-            break;
-        }
-        used += text.len();
-        kept.push(style.span(text));
+    let text: String = out.iter().map(|(t, _)| t.as_str()).collect();
+    let mut runs = Vec::with_capacity(out.len());
+    let mut at = 0;
+    for (piece, style) in &out {
+        at += piece.len();
+        runs.push((at, Some(*style)));
     }
-    let paragraph = rich_text(kept).font_size(size).line_height(LINE);
+    let paragraph = styled(&text, runs, ctx, &ctx.typo.code_family)
+        .font_size(size)
+        .line_height(ctx.typo.line);
     if has_links {
         paragraph.on_link(App::follow_link)
     } else {
         paragraph
     }
+}
+
+/// Plain text (code, html) with find matches highlighted.
+fn marked(text: &str, runs: Vec<(usize, Option<Style>)>, ctx: &Ctx) -> volt_ui_kit::ui::Text<App> {
+    styled(text, runs, ctx, &ctx.typo.code_family)
+}
+
+/// `text` split into spans: `runs` gives each run's end offset and style
+/// (`None` for plain text), and find matches cut runs further. The text is
+/// cut at the 8 KiB element limit.
+fn styled(
+    text: &str,
+    runs: Vec<(usize, Option<Style>)>,
+    ctx: &Ctx,
+    code_family: &str,
+) -> volt_ui_kit::ui::Text<App> {
+    let marks = ctx.find.as_ref().map_or_else(Vec::new, |f| f.take(text));
+    let limit = clip(text, TEXT_LIMIT).len();
+    // Every offset where a span starts or ends.
+    let mut cuts: Vec<usize> = runs.iter().map(|(end, _)| *end).collect();
+    for (r, _) in &marks {
+        cuts.extend([r.start, r.end]);
+    }
+    cuts.push(limit);
+    cuts.retain(|c| *c <= limit);
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut spans = Vec::with_capacity(cuts.len());
+    let mut start = 0;
+    for end in cuts {
+        if end <= start {
+            continue;
+        }
+        let style = runs
+            .iter()
+            .find(|(run_end, _)| *run_end > start)
+            .and_then(|(_, s)| *s)
+            .unwrap_or_default();
+        let mark = marks
+            .iter()
+            .find(|(r, _)| r.start <= start && start < r.end)
+            .map(|(_, current)| *current);
+        let mut s = style.span(text[start..end].to_owned(), code_family);
+        if let Some(current) = mark {
+            s = s.background(if current {
+                ctx.find.as_ref().unwrap().mark_current
+            } else {
+                ctx.find.as_ref().unwrap().mark
+            });
+        }
+        spans.push(s);
+        start = end;
+    }
+    if limit < text.len() {
+        spans.push(span("…"));
+    }
+    rich_text(spans)
 }
 
 #[derive(Clone, Copy, Default)]
@@ -611,10 +866,10 @@ struct Style<'a> {
     link: Option<&'a str>,
 }
 impl Style<'_> {
-    fn span(self, text: String) -> Span {
+    fn span(self, text: String, code_family: &str) -> Span {
         let mut s = span(text);
         if self.code {
-            s = s.code();
+            s = s.code().family(code_family);
         }
         if self.bold {
             s = s.bold();
@@ -632,16 +887,24 @@ impl Style<'_> {
     }
 }
 
-fn spans<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String, Style<'a>)>) {
+/// Inline content flattened into styled pieces of text.
+fn pieces(inlines: &[InlineIr]) -> Vec<(String, Style<'_>)> {
+    let mut out = Vec::new();
+    collect(inlines, Style::default(), &mut out);
+    out.retain(|(t, _)| !t.is_empty());
+    out
+}
+
+fn collect<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String, Style<'a>)>) {
     for inline in inlines {
         let text = inline.text.as_deref().unwrap_or("");
         match inline.kind.as_str() {
             // Soft line breaks inside a paragraph are spaces.
             "text" => out.push((text.replace('\n', " "), style)),
-            "strong" => spans(&inline.children, Style { bold: true, ..style }, out),
-            "emphasis" => spans(&inline.children, Style { italic: true, ..style }, out),
-            "delete" => spans(&inline.children, Style { strike: true, ..style }, out),
-            "link" => spans(
+            "strong" => collect(&inline.children, Style { bold: true, ..style }, out),
+            "emphasis" => collect(&inline.children, Style { italic: true, ..style }, out),
+            "delete" => collect(&inline.children, Style { strike: true, ..style }, out),
+            "link" => collect(
                 &inline.children,
                 Style {
                     link: inline.url.as_deref(),
@@ -664,7 +927,7 @@ fn spans<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String, S
                     out.push(("\n".into(), style));
                 }
             }
-            _ => spans(&inline.children, style, out),
+            _ => collect(&inline.children, style, out),
         }
     }
 }
@@ -776,4 +1039,50 @@ pub fn key_of(id: &str) -> String {
         .take(110)
         .collect();
     if key.is_empty() { "block".into() } else { key }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mdstar_core::document_ir::parse_document_ir_with_diagnostics;
+
+    /// Find counts matches with `unit_texts`; the renderer must show the same
+    /// texts, or highlights drift from the count.
+    #[test]
+    fn find_counts_the_text_rows_render() {
+        let source = "# Find me\n\nA *find* paragraph with `find` code and [find](#x).\n\n- find one\n- two find\n\n| find | b |\n|---|---|\n| c | FIND |\n\n```\nfind\nfind\n```\n";
+        let doc = parse_document_ir_with_diagnostics(source, "t.md").unwrap();
+        let units = units(&doc.blocks);
+        let needle = crate::find::needle("find");
+        let counted: usize = units
+            .iter()
+            .map(|u| {
+                unit_texts(u)
+                    .iter()
+                    .map(|t| crate::find::matches(t, &needle).len())
+                    .sum::<usize>()
+            })
+            .sum();
+        assert_eq!(counted, 10);
+        let images = HashMap::new();
+        let ctx = Ctx {
+            images: &images,
+            copied: None,
+            typo: Typography {
+                size: 16.,
+                line: 1.6,
+                measure: 700.,
+                family: "SF".into(),
+                code_family: "SF Mono".into(),
+            },
+            find: Some(Highlight::new(&needle, None, "#FF0", "#F80")),
+            menu: None,
+        };
+        let mut shown = 0;
+        for i in 0..units.len() {
+            let _ = row(&units, i, &ctx);
+            shown += ctx.find.as_ref().unwrap().seen.get();
+        }
+        assert_eq!(shown, counted);
+    }
 }
