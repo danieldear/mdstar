@@ -7,11 +7,11 @@ use volt_ui_kit::{ColorToken as Role, ui::prelude::*};
 
 use crate::{
     MARKDOWN,
-    app::{App, Doc, MenuTarget, file_action, file_name, heading_action, heading_rows},
+    app::{App, Doc, MenuTarget, file_action, file_name, heading_action, heading_rows, tab_action},
     find,
     render::{self, Highlight, Typography},
     settings::{self, Appearance, CODE_FONTS, SidebarTab, TYPEFACES, Theme},
-    workspace,
+    workspace::{self, FileKind},
 };
 
 pub const TOOLBAR: f32 = 52.;
@@ -21,11 +21,18 @@ const TRAFFIC_LIGHTS: f32 = 78.;
 const ROW: f32 = 28.;
 
 pub fn view(app: &App) -> Element<App> {
-    let main = vstack![toolbar(app), find_bar(app), body(app)]
-        .key("main")
-        .flex(1.)
-        .background(Role::Base100)
-        .align(Align::Stretch);
+    let main = vstack![
+        toolbar(app),
+        tab_bar(app),
+        zstack![body(app), find_panel(app)]
+            .key("stage")
+            .align(Align::Stretch)
+            .flex(1.),
+    ]
+    .key("main")
+    .flex(1.)
+    .background(Role::Base100)
+    .align(Align::Stretch);
     let content: Element<App> = if app.settings.sidebar {
         hstack![sidebar(app), main]
             .key("panes")
@@ -131,6 +138,11 @@ pub fn icon_button(
     .into()
 }
 
+/// A list window clamped to the rows that exist.
+fn within(window: &std::ops::Range<usize>, count: usize) -> std::ops::Range<usize> {
+    window.start.min(count)..window.end.min(count).max(window.start.min(count))
+}
+
 // Toolbar
 
 fn toolbar(app: &App) -> Element<App> {
@@ -164,18 +176,31 @@ fn toolbar(app: &App) -> Element<App> {
     ));
     let (title, meta) = match &app.doc {
         Some(doc) => {
-            let minutes = doc.words.div_ceil(230).max(1);
-            (
-                doc.title.clone(),
-                format!(
-                    "{}  ·  {} words  ·  {} min read",
-                    file_name(&doc.path),
+            let name = file_name(&doc.path);
+            let meta = match doc.kind {
+                FileKind::Markdown => format!(
+                    "{name}  ·  {} words  ·  {} min read",
                     group(doc.words),
-                    minutes
+                    doc.words.div_ceil(230).max(1)
                 ),
-            )
+                FileKind::Code("csv") => format!("{}  ·  Table  ·  {} lines", folder(app, doc), group(doc.words)),
+                FileKind::Code(language) => format!(
+                    "{}  ·  {}  ·  {} lines",
+                    folder(app, doc),
+                    language_name(language),
+                    group(doc.words)
+                ),
+                FileKind::Image => format!("{}  ·  Image", folder(app, doc)),
+            };
+            (doc.title.clone(), meta)
         }
-        None => ("MD Star".into(), "Markdown reader".into()),
+        None => match &app.error {
+            Some(_) => (
+                app.tabs.get(app.active).map_or("MD Star".into(), |t| t.title.clone()),
+                "Couldn’t open".into(),
+            ),
+            None => ("MD Star".into(), "Markdown reader".into()),
+        },
     };
     items.push(
         vstack![
@@ -187,6 +212,15 @@ fn toolbar(app: &App) -> Element<App> {
         .flex(1.)
         .into(),
     );
+    items.push(icon_button(
+        "new",
+        Icon::Plus,
+        "New Document  ⌘N",
+        true,
+        false,
+        App::new_document,
+    ));
+    items.push(icon_button("open", Icon::Folder, "Open…  ⌘O", true, false, App::choose));
     items.push(icon_button(
         "find",
         Icon::Search,
@@ -201,6 +235,15 @@ fn toolbar(app: &App) -> Element<App> {
             }
         },
     ));
+    items.push(icon_button(
+        "reload",
+        Icon::Refresh,
+        "Reload  ⌘R",
+        app.doc.is_some(),
+        false,
+        App::reload,
+    ));
+    items.push(spacer().width(6.).flex(0.).into());
     items.push(icon_button(
         "settings",
         Icon::Type,
@@ -222,6 +265,34 @@ fn toolbar(app: &App) -> Element<App> {
         .into()
 }
 
+/// Where a document lives: its folder within the workspace, or `~/…`.
+fn folder(app: &App, doc: &Doc) -> String {
+    let dir = doc.path.parent().unwrap_or(&doc.path);
+    for root in &app.tree {
+        if let Ok(rel) = dir.strip_prefix(&root.path) {
+            let rel = rel.display().to_string();
+            return if rel.is_empty() { root.name.clone() } else { format!("{}/{rel}", root.name) };
+        }
+    }
+    short_home(&dir.display().to_string())
+}
+
+fn language_name(language: &str) -> String {
+    match language {
+        "json" | "xml" | "html" | "yaml" | "toml" | "ini" | "sql" | "css" | "csv" => language.to_uppercase(),
+        "javascript" => "JavaScript".into(),
+        "typescript" => "TypeScript".into(),
+        "csharp" => "C#".into(),
+        "cpp" => "C++".into(),
+        "objc" => "Objective-C".into(),
+        "text" => "Plain text".into(),
+        other => {
+            let mut c = other.chars();
+            c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
+        }
+    }
+}
+
 fn group(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::new();
@@ -236,12 +307,13 @@ fn group(n: usize) -> String {
 
 // Find
 
-fn find_bar(app: &App) -> Element<App> {
+/// The find panel, floating over the top right of the document.
+fn find_panel(app: &App) -> Element<App> {
     let Some(find) = &app.find else {
-        return vstack![].key("find-bar").height(0.).into();
+        return vstack![].key("find-layer").width(0.).height(0.).into();
     };
     let summary = find.summary();
-    hstack![
+    let panel = hstack![
         text_field(&find.query)
             .key("find-field")
             .placeholder("Find in document")
@@ -250,14 +322,17 @@ fn find_bar(app: &App) -> Element<App> {
             .on_change(App::set_query)
             .on_submit(|app: &mut App| app.find_step(true))
             .on_cancel(App::close_find)
-            .width(300.)
+            .background(Role::BaseContent.alpha(6))
+            .border_width(0.)
+            .width(240.)
             .height(30.)
             .font_size(13.),
-        text(summary.clone())
+        text(if summary.is_empty() { " ".to_string() } else { summary.clone() })
             .key("find-count")
             .font_size(12.)
+            .text_align(TextAlign::Center)
             .color(if summary == "No matches" { Role::Error } else { Role::Muted })
-            .width(96.),
+            .width(78.),
         icon_button(
             "find-previous",
             Icon::ChevronUp,
@@ -274,23 +349,130 @@ fn find_bar(app: &App) -> Element<App> {
             false,
             |app: &mut App| app.find_step(true),
         ),
-        spacer(),
-        button("Done")
-            .key("find-done")
-            .variant(ButtonVariant::Ghost)
-            .size(ControlSize::Small)
-            .font_size(13.)
-            .on_click(App::close_find),
+        icon_button("find-close", Icon::Close, "Close  Esc", true, false, App::close_find),
     ]
-    .key("find-bar")
-    .height(46.)
-    .padding(14., Edge::Horizontal)
-    .gap(6., Axis::Horizontal)
+    .key("find-panel")
+    .gap(2., Axis::Horizontal)
+    .padding(6., Edge::All)
     .align(Align::Center)
-    .background(Role::Base200.alpha(60))
-    .border_sides(Sides::BOTTOM)
+    .background(Role::Base100)
     .border_color(Role::Border)
     .border_width(1.)
+    .rounded(12.)
+    .shadow(Shadow::new().color("#00000026").blur(18.).offset(0., 6.));
+    vstack![panel]
+        .key("find-layer")
+        .flow(Flow::TopRight)
+        .padding(12., Edge::Top)
+        .padding(18., Edge::Right)
+        .scroll_passthrough(true)
+        .into()
+}
+
+// Tabs
+
+fn tab_bar(app: &App) -> Element<App> {
+    if app.tabs.len() < 2 {
+        return vstack![].key("tabs").height(0.).into();
+    }
+    let open = match &app.menu {
+        Some((MenuTarget::Tab(i), at)) => Some((*i, *at)),
+        _ => None,
+    };
+    let tabs: Vec<Element<App>> = app
+        .tabs
+        .iter()
+        .enumerate()
+        .map(|(i, tab)| {
+            let title = if tab.title.is_empty() { "New Tab".to_string() } else { tab.title.clone() };
+            tab_button(i, &title, i == app.active, open.filter(|(t, _)| *t == i).map(|(_, at)| at))
+        })
+        .collect();
+    hstack(tabs)
+        .key("tabs")
+        .height(38.)
+        .gap(4., Axis::Horizontal)
+        .padding(10., Edge::Horizontal)
+        .padding(5., Edge::Vertical)
+        .align(Align::Stretch)
+        .background(Role::Base200.alpha(70))
+        .border_sides(Sides::BOTTOM)
+        .border_color(Role::Border)
+        .border_width(1.)
+        .into()
+}
+
+fn tab_button(i: usize, title: &str, active: bool, menu_at: Option<[f32; 2]>) -> Element<App> {
+    let key = format!("tab-{i}");
+    let mut label = button(title)
+        .key(format!("{key}-button"))
+        .variant(ButtonVariant::Ghost)
+        .size(ControlSize::Small)
+        .font_size(12.5)
+        .font_weight(if active { 600 } else { 400 })
+        .color(if active { Role::BaseContent } else { Role::Muted })
+        .max_lines(1)
+        .label_inset(26.)
+        .rounded(7.)
+        .width_fraction(1.)
+        .height(28.)
+        .accessible_label(format!("Tab {title}"))
+        .on_click(move |app: &mut App| app.switch_tab(i));
+    if active {
+        label = label
+            .background(Role::Base100)
+            .border_color(Role::Border)
+            .border_width(1.);
+    }
+    let close = zstack![
+        button("")
+            .key(format!("{key}-close"))
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Small)
+            .width(20.)
+            .height(20.)
+            .rounded(5.)
+            .accessible_label(format!("Close {title}"))
+            .on_click(move |app: &mut App| app.close_tab(i)),
+        icon(Icon::Close).size(11.).color(Role::Muted),
+    ]
+    .key(format!("{key}-close-layer"))
+    .width(20.)
+    .height(20.);
+    let layer = zstack![
+        label,
+        hstack![close, spacer()]
+            .key(format!("{key}-chrome"))
+            .padding(6., Edge::Left)
+            .align(Align::Center)
+            .scroll_passthrough(true),
+    ]
+    .key(format!("{key}-layer"))
+    .align(Align::Stretch)
+    .width_fraction(1.)
+    .height(28.);
+    context_menu(
+        layer,
+        [
+            menu_item(tab_action::CLOSE, "Close Tab").shortcut("⌘W"),
+            menu_item(tab_action::CLOSE_OTHERS, "Close Other Tabs"),
+            menu_separator(),
+            menu_item(tab_action::COPY_PATH, "Copy Path").icon(Icon::Copy),
+            menu_item(tab_action::REVEAL, "Reveal in Finder").icon(Icon::Folder),
+        ],
+    )
+    .key(key)
+    .flex(1.)
+    .max_width(240.)
+    .open(menu_at.is_some())
+    .position(menu_at.unwrap_or_default())
+    .on_context_open(move |app: &mut App, at| app.open_menu(MenuTarget::Tab(i), at))
+    .on_open_change(|app: &mut App, open| {
+        if !open {
+            app.menu = None;
+        }
+    })
+    .on_action(move |app: &mut App, id| app.tab_action(i, id))
     .into()
 }
 
@@ -380,9 +562,9 @@ fn files(app: &App) -> Element<App> {
         return vstack![
             side_hint(
                 "files-empty",
-                "Add a folder to browse its Markdown files here."
+                "Open a folder to browse its documents here."
             ),
-            button("Add Folder…")
+            button("Open Folder…")
                 .key("add-folder")
                 .size(ControlSize::Small)
                 .on_click(App::choose_folder),
@@ -429,7 +611,7 @@ fn files(app: &App) -> Element<App> {
     })
     .key("files")
     .estimate(ROW)
-    .window(app.side_window.clone())
+    .window(within(&app.side_window, count))
     .gap(1.)
     .on_window_change(|app: &mut App, window| app.side_window = window)
     .flex(1.);
@@ -504,8 +686,17 @@ fn file_row(
         } else {
             spacer().width(12.).flex(0.).into()
         });
+        let glyph = if dir {
+            Icon::Folder
+        } else {
+            match workspace::kind(path) {
+                Some(FileKind::Markdown) => Icon::FileText,
+                Some(FileKind::Image) => Icon::Image,
+                _ => Icon::File,
+            }
+        };
         glyphs.push(
-            icon(if dir { Icon::Folder } else { Icon::FileText })
+            icon(glyph)
                 .size(15.)
                 .color(if selected {
                     Role::Primary.into()
@@ -525,11 +716,19 @@ fn file_row(
                 .into(),
         );
     }
-    let mut items = vec![
-        menu_item(file_action::OPEN, if dir { "Expand or Collapse" } else { "Open" }),
+    let mut items = if dir {
+        vec![menu_item(file_action::OPEN, "Expand or Collapse")]
+    } else {
+        vec![
+            menu_item(file_action::OPEN, "Open"),
+            menu_item(file_action::OPEN_TAB, "Open in New Tab"),
+            menu_separator(),
+        ]
+    };
+    items.extend([
         menu_item(file_action::REVEAL, "Reveal in Finder").icon(Icon::Folder),
         menu_item(file_action::COPY_PATH, "Copy Path").icon(Icon::Copy),
-    ];
+    ]);
     if root {
         items = vec![
             menu_item(file_action::REVEAL, "Reveal in Finder").icon(Icon::Folder),
@@ -617,7 +816,7 @@ fn outline(app: &App) -> Element<App> {
     })
     .key("outline")
     .estimate(ROW)
-    .window(app.side_window.clone())
+    .window(within(&app.side_window, count))
     .gap(1.)
     .on_window_change(|app: &mut App, window| app.side_window = window)
     .flex(1.);
@@ -700,10 +899,12 @@ fn body(app: &App) -> Element<App> {
 }
 
 pub fn typography(app: &App) -> Typography {
+    // Source files and tables use the whole width.
+    let wide = app.doc.as_ref().is_some_and(|d| matches!(d.kind, FileKind::Code(_)));
     Typography {
         size: app.settings.font_size,
         line: app.settings.line_height,
-        measure: app.settings.width,
+        measure: if wide { 1800. } else { app.settings.width },
         family: app.settings.body_family(),
         code_family: app.settings.code_family(),
     }
@@ -719,6 +920,8 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
         .unwrap_or_default();
     let ctx = render::Ctx {
         images: &doc.images,
+        dark: app.theme().dark(),
+        code_view: matches!(doc.kind, FileKind::Code(language) if language != "csv"),
         copied: app.copied.as_deref(),
         typo: typography(app),
         find: (!needle.is_empty()).then(|| {
@@ -741,7 +944,7 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
     lazy_list(units.len(), |i| render::row(&units, i, &ctx))
         .key("document")
         .estimates(estimates)
-        .window(app.window.clone())
+        .window(within(&app.window, units.len()))
         .overscan(4)
         .generation(app.generation)
         .scroll_to_row(app.jump.0, app.jump.1)
@@ -785,16 +988,19 @@ fn welcome(app: &App) -> Element<App> {
             .font_weight(700)
             .letter_spacing(-0.015)
             .into(),
-        text("A calm, native reader for Markdown.")
+        text("Read, browse and write Markdown, natively.")
             .font_size(15.)
             .color(Role::Muted)
             .into(),
         hstack![
+            button("New Document")
+                .key("welcome-new")
+                .variant(ButtonVariant::Primary)
+                .on_click(App::new_document),
             button("Open File…")
                 .key("welcome-open")
-                .variant(ButtonVariant::Primary)
                 .on_click(App::choose_file),
-            button("Add Folder…")
+            button("Open Folder…")
                 .key("welcome-folder")
                 .on_click(App::choose_folder),
         ]
@@ -833,7 +1039,7 @@ fn welcome(app: &App) -> Element<App> {
                     .max_lines(1)
                     .font_size(13.)
                     .fill_width()
-                    .on_click(move |app: &mut App| app.visit(path.clone()))
+                    .on_click(move |app: &mut App| app.open_in_tab(path.clone()))
                     .into(),
             );
         }

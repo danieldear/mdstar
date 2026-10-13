@@ -7,6 +7,105 @@ use std::{
 
 use crate::MARKDOWN;
 
+/// How a file in the workspace is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileKind {
+    Markdown,
+    /// Text shown as highlighted code, with its language name.
+    Code(&'static str),
+    Image,
+}
+
+/// Text formats shown as code, by extension, with their language.
+const CODE: [(&str, &str); 58] = [
+    ("txt", "text"),
+    ("text", "text"),
+    ("log", "text"),
+    ("json", "json"),
+    ("jsonc", "json"),
+    ("json5", "json"),
+    ("geojson", "json"),
+    ("ipynb", "json"),
+    ("xml", "xml"),
+    ("plist", "xml"),
+    ("svg", "xml"),
+    ("html", "html"),
+    ("htm", "html"),
+    ("xhtml", "html"),
+    ("yaml", "yaml"),
+    ("yml", "yaml"),
+    ("toml", "toml"),
+    ("ini", "ini"),
+    ("cfg", "ini"),
+    ("conf", "ini"),
+    ("properties", "ini"),
+    ("env", "ini"),
+    ("csv", "csv"),
+    ("tsv", "csv"),
+    ("sql", "sql"),
+    ("rs", "rust"),
+    ("py", "python"),
+    ("rb", "ruby"),
+    ("go", "go"),
+    ("java", "java"),
+    ("kt", "kotlin"),
+    ("kts", "kotlin"),
+    ("swift", "swift"),
+    ("c", "c"),
+    ("h", "c"),
+    ("cc", "cpp"),
+    ("cpp", "cpp"),
+    ("hpp", "cpp"),
+    ("m", "objc"),
+    ("mm", "objc"),
+    ("cs", "csharp"),
+    ("js", "javascript"),
+    ("mjs", "javascript"),
+    ("cjs", "javascript"),
+    ("jsx", "javascript"),
+    ("ts", "typescript"),
+    ("tsx", "typescript"),
+    ("css", "css"),
+    ("scss", "css"),
+    ("less", "css"),
+    ("sh", "shell"),
+    ("bash", "shell"),
+    ("zsh", "shell"),
+    ("fish", "shell"),
+    ("lua", "lua"),
+    ("php", "php"),
+    ("diff", "diff"),
+    ("patch", "diff"),
+];
+/// Files without an extension that are still text.
+const NAMED: [(&str, &str); 6] = [
+    ("Makefile", "shell"),
+    ("Dockerfile", "shell"),
+    ("LICENSE", "text"),
+    ("Gemfile", "ruby"),
+    ("Cargo.lock", "toml"),
+    ("CODEOWNERS", "text"),
+];
+const IMAGES: [&str; 3] = ["png", "jpg", "jpeg"];
+
+/// How `path` opens, or `None` when the workspace hides it.
+pub fn kind(path: &Path) -> Option<FileKind> {
+    if is_markdown(path) {
+        return Some(FileKind::Markdown);
+    }
+    let name = path.file_name()?.to_str()?;
+    if let Some((_, language)) = NAMED.iter().find(|(n, _)| *n == name) {
+        return Some(FileKind::Code(language));
+    }
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    if IMAGES.contains(&ext.as_str()) {
+        return Some(FileKind::Image);
+    }
+    CODE.iter()
+        .find(|(e, _)| *e == ext)
+        .map(|(_, language)| FileKind::Code(language))
+}
+
 /// Folders never worth showing in a document tree.
 const SKIP: [&str; 14] = [
     "node_modules",
@@ -44,11 +143,14 @@ impl Node {
 pub fn is_markdown(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| MARKDOWN.contains(&e.to_ascii_lowercase().as_str()))
+        .is_some_and(|e| {
+            let e = e.to_ascii_lowercase();
+            e != "txt" && MARKDOWN.contains(&e.as_str())
+        })
 }
 
-/// The Markdown files under `root`, keeping only folders that contain some.
-/// Hidden entries and build or dependency folders are skipped.
+/// The files under `root` the reader can show, keeping only folders that
+/// contain some. Hidden entries and build or dependency folders are skipped.
 pub fn scan(root: &Path) -> Node {
     let mut budget = MAX_ENTRIES;
     let children = scan_dir(root, 0, &mut budget).unwrap_or_default();
@@ -91,7 +193,7 @@ fn scan_dir(dir: &Path, depth: usize, budget: &mut usize) -> Option<Vec<Node>> {
                     children: Some(children),
                 });
             }
-        } else if is_markdown(&path) && (kind.is_file() || path.is_file()) {
+        } else if self::kind(&path).is_some() && (kind.is_file() || path.is_file()) {
             out.push(Node {
                 path,
                 name,
@@ -209,6 +311,7 @@ mod tests {
             "docs/guide.markdown",
             "docs/deep/api.md",
             "docs/image.png",
+            "docs/data.json",
             "empty/readme.txt.bak",
             "node_modules/pkg/README.md",
             ".git/HEAD.md",
@@ -236,6 +339,18 @@ mod tests {
     }
 
     #[test]
+    fn file_kinds_cover_markdown_code_data_and_images() {
+        assert_eq!(kind(Path::new("a/README.MD")), Some(FileKind::Markdown));
+        assert_eq!(kind(Path::new("notes.txt")), Some(FileKind::Code("text")));
+        assert_eq!(kind(Path::new("data.json")), Some(FileKind::Code("json")));
+        assert_eq!(kind(Path::new("Cargo.toml")), Some(FileKind::Code("toml")));
+        assert_eq!(kind(Path::new("x/Makefile")), Some(FileKind::Code("shell")));
+        assert_eq!(kind(Path::new("shot.PNG")), Some(FileKind::Image));
+        assert_eq!(kind(Path::new("archive.zip")), None);
+        assert_eq!(kind(Path::new("no_extension")), None);
+    }
+
+    #[test]
     fn rows_follow_expansion_and_filters_keep_parent_folders() {
         let root = fixture("rows");
         let tree = [scan(&root)];
@@ -247,7 +362,7 @@ mod tests {
         let collapsed = names(rows(&tree, &HashSet::new(), ""));
         assert_eq!(collapsed.len(), 5, "{collapsed:?}");
         let expanded: HashSet<PathBuf> = [root.join("docs")].into();
-        assert_eq!(rows(&tree, &expanded, "").len(), 7);
+        assert_eq!(rows(&tree, &expanded, "").len(), 9);
         let filtered = names(rows(&tree, &HashSet::new(), "API"));
         assert_eq!(filtered[1..], ["  docs", "    deep", "      api.md"]);
         std::fs::remove_dir_all(root).ok();

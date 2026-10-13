@@ -14,7 +14,11 @@ use std::{cell::Cell, collections::HashMap, ops::Range};
 use mdstar_core::document_ir::{BlockIr, InlineIr};
 use volt_ui_kit::{graphics::Image, ui::prelude::*};
 
-use crate::{App, find::Hit};
+use crate::{
+    App,
+    find::Hit,
+    highlight::{self, Token},
+};
 
 /// Each text element holds at most 8 KiB.
 const TEXT_LIMIT: usize = 8000;
@@ -100,6 +104,11 @@ impl<'a> Highlight<'a> {
 
 pub struct Ctx<'a> {
     pub images: &'a HashMap<String, Image>,
+    /// Dark theme: picks syntax colours.
+    pub dark: bool,
+    /// A source file rather than prose: code shows line numbers and does
+    /// not wrap.
+    pub code_view: bool,
     /// The code block whose Copy button was pressed last.
     pub copied: Option<&'a str>,
     pub typo: Typography,
@@ -126,6 +135,8 @@ pub enum Unit<'a> {
         text: String,
         part: usize,
         last: bool,
+        /// The 1-based number of the run's first line.
+        first_line: usize,
     },
 }
 
@@ -181,13 +192,17 @@ pub fn units(blocks: &[BlockIr]) -> Vec<Unit<'_>> {
             "code" | "math" => {
                 let parts = chunks(code_source(block));
                 let count = parts.len();
+                let mut first_line = 1;
                 for (part, text) in parts.into_iter().enumerate() {
+                    let lines = text.split('\n').count();
                     out.push(Unit::Code {
                         block,
                         text,
                         part,
                         last: part + 1 == count,
+                        first_line,
                     });
+                    first_line += lines;
                 }
             }
             _ => out.push(Unit::Block(block)),
@@ -281,7 +296,8 @@ pub fn row(units: &[Unit], i: usize, ctx: &Ctx) -> Element<App> {
             text,
             part,
             last,
-        } => code_part(block, text, *part, *last, ctx),
+            first_line,
+        } => code_part(block, text, *part, *last, *first_line, ctx),
     };
     let mut top = space_above(units, i, t);
     let mut bottom = 0.;
@@ -495,10 +511,15 @@ fn block_element(block: &BlockIr, ctx: &Ctx, depth: usize) -> Element<App> {
         "code" | "math" => {
             let parts = chunks(code_source(block));
             let count = parts.len();
+            let mut first_line = 1;
             let parts: Vec<Element<App>> = parts
                 .iter()
                 .enumerate()
-                .map(|(i, text)| code_part(block, text, i, i + 1 == count, ctx))
+                .map(|(i, text)| {
+                    let part = code_part(block, text, i, i + 1 == count, first_line, ctx);
+                    first_line += text.split('\n').count();
+                    part
+                })
                 .collect();
             vstack(parts).key(key).into()
         }
@@ -588,7 +609,14 @@ fn task_box(done: bool) -> Element<App> {
 
 /// One part of a code block. The first part carries the language and a
 /// Copy button for the whole block; parts join into one rounded frame.
-fn code_part(block: &BlockIr, code: &str, part: usize, last: bool, ctx: &Ctx) -> Element<App> {
+fn code_part(
+    block: &BlockIr,
+    code: &str,
+    part: usize,
+    last: bool,
+    first_line: usize,
+    ctx: &Ctx,
+) -> Element<App> {
     let key = key_of(&block.id);
     let t = &ctx.typo;
     let first = part == 0;
@@ -629,16 +657,40 @@ fn code_part(block: &BlockIr, code: &str, part: usize, last: bool, ctx: &Ctx) ->
         );
     }
     let code = if code.is_empty() { " " } else { code };
+    let language = block.language.as_deref().unwrap_or(if block.kind == "math" { "latex" } else { "" });
+    let body = styled(code, syntax_runs(language, code, ctx.dark), ctx, &t.code_family)
+        .font_family(t.code_family.clone())
+        .font_size(t.code_size())
+        .line_height(1.55)
+        .no_wrap(ctx.code_view);
+    let content: Element<App> = if ctx.code_view {
+        // Line numbers in a gutter; code does not wrap, so rows line up.
+        let lines = code.split('\n').count();
+        let numbers: Vec<String> = (first_line..first_line + lines).map(|n| n.to_string()).collect();
+        hstack![
+            text(numbers.join("\n"))
+                .font_family(t.code_family.clone())
+                .font_size(t.code_size())
+                .line_height(1.55)
+                .no_wrap(true)
+                .text_align(TextAlign::End)
+                .color(ColorToken::Muted.alpha(70))
+                .width(gutter_width(first_line + lines, t.code_size()))
+                .flex(0.),
+            vstack![body].flex(1.).clip_contents(true),
+        ]
+        .gap(16., Axis::Horizontal)
+        .into()
+    } else {
+        body.into()
+    };
     parts.push(
-        vstack![marked(code, vec![(code.len(), None)], ctx)
-            .font_family(t.code_family.clone())
-            .font_size(t.code_size())
-            .line_height(1.55)]
-        .key(format!("{key}-code-{part}"))
-        .padding(16., Edge::Horizontal)
-        .padding(if first { 12. } else { 0. }, Edge::Top)
-        .padding(if last { 14. } else { 0. }, Edge::Bottom)
-        .into(),
+        vstack![content]
+            .key(format!("{key}-code-{part}"))
+            .padding(16., Edge::Horizontal)
+            .padding(if first { 12. } else { 0. }, Edge::Top)
+            .padding(if last { 14. } else { 0. }, Edge::Bottom)
+            .into(),
     );
     let sides = match (first, last) {
         (true, true) => Sides::ALL,
@@ -655,6 +707,38 @@ fn code_part(block: &BlockIr, code: &str, part: usize, last: bool, ctx: &Ctx) ->
         .rounded_on(10., corners(first, last))
         .clip_contents(true)
         .into()
+}
+
+/// Width of a line-number gutter that fits `last`.
+fn gutter_width(last: usize, size: f32) -> f32 {
+    (last.max(10).ilog10() + 1) as f32 * size * 0.62 + 4.
+}
+
+/// Syntax colours as style runs: (end offset, style) covering `code`.
+fn syntax_runs(language: &str, code: &str, dark: bool) -> Vec<(usize, Option<Style<'static>>)> {
+    // Room is left for find matches under the 1024-span limit.
+    let tokens = highlight::tokens(language, code, 600);
+    let mut runs = Vec::with_capacity(tokens.len() * 2 + 1);
+    let mut at = 0;
+    for (range, token) in tokens {
+        if range.start < at || range.end > code.len() {
+            continue;
+        }
+        if range.start > at {
+            runs.push((range.start, None));
+        }
+        runs.push((
+            range.end,
+            Some(Style {
+                color: Some(highlight::color(token, dark)),
+                italic: token == Token::Comment,
+                ..Style::default()
+            }),
+        ));
+        at = range.end;
+    }
+    runs.push((code.len(), None));
+    runs
 }
 
 /// Rounded corners for the first and last part of a split frame.
@@ -864,6 +948,7 @@ struct Style<'a> {
     strike: bool,
     code: bool,
     link: Option<&'a str>,
+    color: Option<&'static str>,
 }
 impl Style<'_> {
     fn span(self, text: String, code_family: &str) -> Span {
@@ -882,6 +967,9 @@ impl Style<'_> {
         }
         if let Some(target) = self.link.filter(|t| !t.is_empty() && t.len() <= 2048) {
             s = s.link(target);
+        }
+        if let Some(color) = self.color {
+            s = s.color(color);
         }
         s
     }
@@ -1067,6 +1155,8 @@ mod tests {
         let images = HashMap::new();
         let ctx = Ctx {
             images: &images,
+            dark: false,
+            code_view: false,
             copied: None,
             typo: Typography {
                 size: 16.,

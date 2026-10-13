@@ -1,12 +1,13 @@
 //! MD Star reader drawn natively with Volt UI Kit.
 //!
 //! ```text
-//! mdstar-volt [FILE.md | FOLDER] [--theme light|dark|system]
+//! mdstar-volt [FILE.md | FOLDER]... [--theme light|dark|system]
 //! mdstar-volt FILE.md --snapshot out.png [--size 1100x800] [--scale 2] [--theme dark]
 //! ```
 
 mod app;
 mod find;
+mod highlight;
 mod render;
 mod settings;
 mod view;
@@ -38,14 +39,61 @@ fn has_doc(app: &App) -> bool {
     app.doc.is_some()
 }
 
+/// ⌘1 to ⌘9 show tabs by position, ⌘9 the last.
+const TAB_KEYS: [(&str, char); 9] = [
+    ("tab-1", '1'),
+    ("tab-2", '2'),
+    ("tab-3", '3'),
+    ("tab-4", '4'),
+    ("tab-5", '5'),
+    ("tab-6", '6'),
+    ("tab-7", '7'),
+    ("tab-8", '8'),
+    ("tab-9", '9'),
+];
+
 fn commands() -> CommandRegistry<App> {
     let primary = Shortcut::primary;
-    CommandRegistry::new()
+    let mut registry = CommandRegistry::new();
+    for (n, (id, key)) in TAB_KEYS.into_iter().enumerate() {
+        registry = registry.command(
+            Command::new(id, format!("Show Tab {}", n + 1), move |app: &mut App| {
+                let i = if n == 8 { app.tabs.len().saturating_sub(1) } else { n };
+                app.switch_tab(i);
+            })
+            .shortcut(primary(key))
+            .enabled_when(move |app: &App| app.tabs.len() > 1 && (n == 8 || n < app.tabs.len())),
+        );
+    }
+    registry
         .command(Command::new("settings", "Settings…", App::open_settings).shortcut(primary(',')))
-        .command(Command::new("open", "Open…", App::choose_file).shortcut(primary('o')))
+        .command(Command::new("new", "New Document…", App::new_document).shortcut(primary('n')))
+        .command(Command::new("open", "Open…", App::choose).shortcut(primary('o')))
         .command(
-            Command::new("add-folder", "Add Folder to Workspace…", App::choose_folder)
+            Command::new("open-folder", "Open Folder…", App::choose_folder)
                 .shortcut(primary('o').shift(true)),
+        )
+        .command(Command::new(
+            "add-folder",
+            "Add Folder to Workspace…",
+            App::choose_folder_to_add,
+        ))
+        .command(Command::new("new-tab", "New Tab", App::new_tab).shortcut(primary('t')))
+        .command(
+            Command::new("close-tab", "Close Tab", |app: &mut App| app.close_tab(app.active))
+                .shortcut(primary('w')),
+        )
+        .command(
+            Command::new("next-tab", "Show Next Tab", |app: &mut App| app.cycle_tab(1))
+                .shortcut(primary(']').shift(true))
+                .enabled_when(|app: &App| app.tabs.len() > 1),
+        )
+        .command(
+            Command::new("previous-tab", "Show Previous Tab", |app: &mut App| {
+                app.cycle_tab(-1)
+            })
+            .shortcut(primary('[').shift(true))
+            .enabled_when(|app: &App| app.tabs.len() > 1),
         )
         .command(
             Command::new("reload", "Reload", App::reload)
@@ -77,13 +125,13 @@ fn commands() -> CommandRegistry<App> {
             Command::new("files", "Show Files", |app: &mut App| {
                 app.show_sidebar(SidebarTab::Files)
             })
-            .shortcut(primary('1')),
+            .shortcut(primary('1').alt(true)),
         )
         .command(
             Command::new("outline", "Show Outline", |app: &mut App| {
                 app.show_sidebar(SidebarTab::Outline)
             })
-            .shortcut(primary('2')),
+            .shortcut(primary('2').alt(true)),
         )
         .command(
             Command::new("bigger", "Bigger Text", |app: &mut App| app.zoom(1))
@@ -131,10 +179,15 @@ fn menus() -> DesktopConfig {
         .menu(DesktopMenu::new(
             "File",
             [
+                item("new", "New Document…"),
+                item("new-tab", "New Tab"),
                 item("open", "Open…"),
+                item("open-folder", "Open Folder…"),
                 item("add-folder", "Add Folder to Workspace…"),
                 sep(),
                 item("reload", "Reload"),
+                sep(),
+                item("close-tab", "Close Tab"),
             ],
         ))
         .menu(DesktopMenu::new(
@@ -161,12 +214,19 @@ fn menus() -> DesktopConfig {
         ))
         .menu(DesktopMenu::new(
             "Go",
-            [item("back", "Back"), item("forward", "Forward")],
+            [
+                item("back", "Back"),
+                item("forward", "Forward"),
+                sep(),
+                item("next-tab", "Show Next Tab"),
+                item("previous-tab", "Show Previous Tab"),
+            ],
         ))
 }
 
 struct Args {
-    file: Option<PathBuf>,
+    /// Files open in tabs; a folder becomes the workspace.
+    files: Vec<PathBuf>,
     appearance: Option<Appearance>,
     snapshot: Option<PathBuf>,
     size: [f32; 2],
@@ -181,7 +241,7 @@ struct Args {
 
 fn args() -> Result<Args, String> {
     let mut a = Args {
-        file: None,
+        files: Vec::new(),
         appearance: None,
         snapshot: None,
         size: [1100., 800.],
@@ -238,7 +298,7 @@ fn args() -> Result<Args, String> {
                 );
                 std::process::exit(0);
             }
-            file if !file.starts_with('-') => a.file = Some(PathBuf::from(file)),
+            file if !file.starts_with('-') => a.files.push(PathBuf::from(file)),
             other => return Err(format!("unknown option {other}")),
         }
     }
@@ -312,10 +372,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings.appearance = appearance;
     }
     let mut app = App::new(settings, settings_path);
-    match args.file {
-        Some(path) if path.is_dir() => app.add_folder(path),
-        Some(path) => app.open(path),
-        None => {}
+    for path in args.files {
+        if path.is_dir() {
+            app.open_folder(path);
+        } else {
+            app.open_in_tab(path);
+        }
     }
     if let Some(path) = &snapshot_path {
         if let Some(query) = args.find {
@@ -422,7 +484,7 @@ mod tests {
         }
         source.push_str("The very last line.\n");
         let (dir, file) = temp_doc("long", &source);
-        let mut app = App::default();
+        let mut app = App::new(Settings::default(), None);
         app.open(file);
         let (rows, last) = {
             let units = app.doc.as_ref().unwrap().units();
@@ -446,7 +508,7 @@ mod tests {
         }
         source.push_str("The needle is here.\n\nAnd a second NEEDLE.\n");
         let (dir, file) = temp_doc("find", &source);
-        let mut app = App::default();
+        let mut app = App::new(Settings::default(), None);
         app.open(file);
         settle_view(&mut app);
         app.open_find();
@@ -477,7 +539,7 @@ mod tests {
             );
         }
         for file in files {
-            let mut app = App::default();
+            let mut app = App::new(Settings::default(), None);
             app.open(file.clone());
             assert!(app.error.is_none(), "{}: {:?}", file.display(), app.error);
             app.open_find();
@@ -504,7 +566,7 @@ mod tests {
         let nested = dir.join("a/b/c.md");
         std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
         std::fs::write(&nested, "# C\n").unwrap();
-        let mut app = App::default();
+        let mut app = App::new(Settings::default(), None);
         app.open(file);
         assert_eq!(app.tree.len(), 1, "the document's folder stands in");
         app.visit(nested.clone());

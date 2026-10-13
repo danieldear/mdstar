@@ -7,7 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use mdstar_core::document_ir::{DocumentIr, parse_document_ir_with_diagnostics};
+use mdstar_core::document_ir::{
+    BlockIr, DOCUMENT_IR_SCHEMA_VERSION, DocumentIr, InlineIr, parse_document_ir_with_diagnostics,
+};
 use volt_ui_kit::{
     graphics::Image,
     native::{
@@ -21,11 +23,15 @@ use crate::{
     find::Find,
     render::{self, action},
     settings::{Settings, SidebarTab, Theme},
-    workspace,
+    workspace::{self, FileKind},
 };
 
 /// Sidebar rows built before the list reports what fits.
 pub const SIDE_WINDOW: Range<usize> = 0..40;
+/// Text files larger than this are not opened.
+const MAX_TEXT: u64 = 16 * 1024 * 1024;
+/// CSV rows shown as a table.
+const MAX_CSV_ROWS: usize = 5000;
 
 /// What a context menu was opened on.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,12 +40,15 @@ pub enum MenuTarget {
     File(PathBuf),
     /// An outline entry, by its document row.
     Heading(usize),
+    Tab(usize),
 }
 
 pub struct Doc {
     pub path: PathBuf,
+    pub kind: FileKind,
     pub ir: DocumentIr,
     pub title: String,
+    /// Words for Markdown, lines for code.
     pub words: usize,
     pub images: HashMap<String, Image>,
 }
@@ -48,6 +57,24 @@ impl Doc {
     pub fn units(&self) -> Vec<render::Unit<'_>> {
         render::units(&self.ir.blocks)
     }
+}
+
+/// An open document tab. The active tab's document lives in [`App`]; the
+/// others keep theirs here until they are shown again.
+#[derive(Default)]
+pub struct Tab {
+    pub path: Option<PathBuf>,
+    pub title: String,
+    saved: Option<TabState>,
+}
+
+#[derive(Default)]
+struct TabState {
+    doc: Option<Doc>,
+    error: Option<String>,
+    back: Vec<PathBuf>,
+    forward: Vec<PathBuf>,
+    first_visible: usize,
 }
 
 #[derive(Default)]
@@ -69,6 +96,10 @@ pub struct App {
     pub filter: String,
     pub side_window: Range<usize>,
 
+    pub tabs: Vec<Tab>,
+    pub active: usize,
+
+    // The active tab.
     pub doc: Option<Doc>,
     pub error: Option<String>,
     /// Document rows currently built, the first row on screen, and the row
@@ -76,7 +107,7 @@ pub struct App {
     pub window: Range<usize>,
     pub first_visible: usize,
     pub jump: (usize, u32),
-    /// Bumped per loaded document so row measurements start fresh.
+    /// Bumped per shown document so row measurements start fresh.
     pub generation: u64,
     pub back: Vec<PathBuf>,
     pub forward: Vec<PathBuf>,
@@ -92,6 +123,7 @@ impl App {
         let mut app = App {
             expanded: settings.expanded.iter().cloned().collect(),
             side_window: SIDE_WINDOW,
+            tabs: vec![Tab::default()],
             settings,
             settings_path,
             ..App::default()
@@ -153,46 +185,32 @@ impl App {
 
     // Documents
 
+    /// Show `path` in the current tab.
     pub fn open(&mut self, path: PathBuf) {
         self.menu = None;
-        match std::fs::read_to_string(&path) {
-            Ok(source) => match parse_document_ir_with_diagnostics(&source, &path.to_string_lossy()) {
-                Ok(ir) => {
-                    let title = ir
-                        .outline
-                        .iter()
-                        .find(|item| item.level == 1)
-                        .map(|item| item.text.clone())
-                        .unwrap_or_else(|| file_name(&path));
-                    let doc = Doc {
-                        images: load_images(&ir, &path),
-                        words: render::word_count(&ir.blocks),
-                        title,
-                        ir,
-                        path: path.clone(),
-                    };
-                    self.window = 0..doc.units().len().min(30);
-                    self.doc = Some(doc);
-                    self.error = None;
-                    self.copied = None;
-                    self.generation = self.generation.wrapping_add(1);
-                    self.first_visible = 0;
-                    self.jump = (0, self.jump.1.wrapping_add(1));
-                    self.settings.remember(&path);
-                    self.reveal_in_tree(&path);
-                    self.save_settings();
-                    self.recount();
-                }
-                Err(e) => {
-                    self.doc = None;
-                    self.error = Some(format!("{} could not be read as Markdown: {e}", file_name(&path)));
-                }
-            },
+        self.ensure_tab();
+        match load(&path) {
+            Ok(doc) => {
+                self.window = 0..doc.units().len().min(30);
+                self.tabs[self.active].title = file_name(&path);
+                self.doc = Some(doc);
+                self.error = None;
+                self.settings.remember(&path);
+                self.reveal_in_tree(&path);
+                self.save_settings();
+            }
             Err(e) => {
                 self.doc = None;
-                self.error = Some(format!("{} could not be opened: {e}", path.display()));
+                self.tabs[self.active].title = file_name(&path);
+                self.error = Some(e);
             }
         }
+        self.tabs[self.active].path = Some(path);
+        self.copied = None;
+        self.generation = self.generation.wrapping_add(1);
+        self.first_visible = 0;
+        self.jump = (0, self.jump.1.wrapping_add(1));
+        self.recount();
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -200,7 +218,8 @@ impl App {
     }
 
     pub fn reload(&mut self) {
-        if let Some(path) = self.path().map(Path::to_path_buf) {
+        let path = self.tabs.get(self.active).and_then(|t| t.path.clone());
+        if let Some(path) = path {
             let first = self.first_visible;
             self.open(path);
             // Keep the reader's place.
@@ -209,16 +228,58 @@ impl App {
         }
     }
 
-    pub fn choose_file(&mut self) {
-        match file_dialog::open_file(&FileDialogOptions::new("Open Markdown")) {
-            Ok(Some(path)) => self.visit(path),
+    /// Open… : a file opens in a tab, a folder becomes the workspace.
+    pub fn choose(&mut self) {
+        match file_dialog::open_file_or_folder(&FileDialogOptions::new("Open")) {
+            Ok(Some(path)) if path.is_dir() => self.open_folder(path),
+            Ok(Some(path)) => self.open_in_tab(path),
             Ok(None) => {}
             Err(e) => self.error = Some(e.to_string()),
         }
     }
 
-    /// Open a document, remembering the current one for Back.
+    pub fn choose_file(&mut self) {
+        match file_dialog::open_file(&FileDialogOptions::new("Open Document")) {
+            Ok(Some(path)) => self.open_in_tab(path),
+            Ok(None) => {}
+            Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+
+    /// Create a Markdown file and open it.
+    pub fn new_document(&mut self) {
+        let options = FileDialogOptions::new("New Markdown Document").suggested_name("Untitled.md");
+        match file_dialog::save_file(&options) {
+            Ok(Some(mut path)) => {
+                if !workspace::is_markdown(&path) {
+                    path.set_extension("md");
+                }
+                if !path.exists() {
+                    let title = path
+                        .file_stem()
+                        .map_or_else(|| "Untitled".into(), |s| s.to_string_lossy().into_owned());
+                    if let Err(e) = std::fs::write(&path, format!("# {title}\n\n")) {
+                        self.error = Some(format!("{} could not be created: {e}", path.display()));
+                        return;
+                    }
+                }
+                self.rescan();
+                self.open_in_tab(path);
+            }
+            Ok(None) => {}
+            Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+
+    /// Open a document in the current tab, remembering the current one for
+    /// Back. A document already open in another tab is shown there instead.
     pub fn visit(&mut self, path: PathBuf) {
+        if let Some(i) = self.tab_with(&path)
+            && i != self.active
+        {
+            self.switch_tab(i);
+            return;
+        }
         if let Some(current) = self.path()
             && current != path
         {
@@ -251,13 +312,14 @@ impl App {
         self.jump = (row, self.jump.1.wrapping_add(1));
     }
 
-    /// Follow a clicked link (see [`link_action`]).
+    /// Follow a clicked link (see [`link_action`]). Other documents open in
+    /// a new tab, or the tab already showing them.
     pub fn follow_link(&mut self, target: String) {
         match link_action(&target, self.path()) {
             LinkAction::Anchor(anchor) => self.jump_to_anchor(&anchor),
             LinkAction::Document(path, anchor) => {
                 if path.is_file() {
-                    self.visit(path);
+                    self.open_in_tab(path);
                     if let Some(anchor) = anchor {
                         self.jump_to_anchor(&anchor);
                     }
@@ -283,6 +345,116 @@ impl App {
         if clipboard::set_text(text).is_ok() {
             self.copied = code;
         }
+    }
+
+    // Tabs
+
+    fn ensure_tab(&mut self) {
+        if self.tabs.is_empty() {
+            self.tabs.push(Tab::default());
+            self.active = 0;
+        }
+    }
+
+    pub fn tab_with(&self, path: &Path) -> Option<usize> {
+        self.tabs.iter().position(|t| t.path.as_deref() == Some(path))
+    }
+
+    /// Show `path` in its tab, or in a new one. An empty current tab is used
+    /// rather than adding another.
+    pub fn open_in_tab(&mut self, path: PathBuf) {
+        if let Some(i) = self.tab_with(&path) {
+            self.switch_tab(i);
+            return;
+        }
+        if self.doc.is_some() || self.error.is_some() {
+            self.new_tab();
+        }
+        self.open(path);
+    }
+
+    /// An empty tab after the current one.
+    pub fn new_tab(&mut self) {
+        self.ensure_tab();
+        let state = self.stash();
+        self.tabs[self.active].saved = Some(state);
+        self.active += 1;
+        self.tabs.insert(self.active, Tab::default());
+        self.restore(TabState::default());
+    }
+
+    pub fn switch_tab(&mut self, i: usize) {
+        if i == self.active || i >= self.tabs.len() {
+            return;
+        }
+        let state = self.stash();
+        self.tabs[self.active].saved = Some(state);
+        self.active = i;
+        let state = self.tabs[i].saved.take().unwrap_or_default();
+        self.restore(state);
+    }
+
+    /// Step through tabs, wrapping around.
+    pub fn cycle_tab(&mut self, step: isize) {
+        let n = self.tabs.len() as isize;
+        if n > 1 {
+            self.switch_tab((self.active as isize + step).rem_euclid(n) as usize);
+        }
+    }
+
+    pub fn close_tab(&mut self, i: usize) {
+        self.menu = None;
+        if i >= self.tabs.len() {
+            return;
+        }
+        if self.tabs.len() == 1 {
+            self.stash();
+            self.tabs[0] = Tab::default();
+            self.restore(TabState::default());
+            return;
+        }
+        self.tabs.remove(i);
+        if i == self.active {
+            self.stash();
+            self.active = i.min(self.tabs.len() - 1);
+            let state = self.tabs[self.active].saved.take().unwrap_or_default();
+            self.restore(state);
+        } else if i < self.active {
+            self.active -= 1;
+        }
+    }
+
+    pub fn close_other_tabs(&mut self, keep: usize) {
+        if keep >= self.tabs.len() {
+            return;
+        }
+        self.switch_tab(keep);
+        let tab = self.tabs.swap_remove(keep);
+        self.tabs = vec![tab];
+        self.active = 0;
+    }
+
+    fn stash(&mut self) -> TabState {
+        TabState {
+            doc: self.doc.take(),
+            error: self.error.take(),
+            back: std::mem::take(&mut self.back),
+            forward: std::mem::take(&mut self.forward),
+            first_visible: self.first_visible,
+        }
+    }
+
+    fn restore(&mut self, state: TabState) {
+        self.window = 0..state.doc.as_ref().map_or(0, |d| d.units().len().min(30));
+        self.doc = state.doc;
+        self.error = state.error;
+        self.back = state.back;
+        self.forward = state.forward;
+        self.copied = None;
+        self.menu = None;
+        self.generation = self.generation.wrapping_add(1);
+        self.jump_to(state.first_visible);
+        self.recount();
     }
 
     // Workspace
@@ -325,10 +497,30 @@ impl App {
     }
 
     pub fn choose_folder(&mut self) {
+        match file_dialog::open_folder(&FileDialogOptions::new("Open Folder")) {
+            Ok(Some(path)) => self.open_folder(path),
+            Ok(None) => {}
+            Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+
+    pub fn choose_folder_to_add(&mut self) {
         match file_dialog::open_folder(&FileDialogOptions::new("Add Folder to Workspace")) {
             Ok(Some(path)) => self.add_folder(path),
             Ok(None) => {}
             Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+
+    /// Make `path` the workspace, and show its README when nothing is open.
+    pub fn open_folder(&mut self, path: PathBuf) {
+        self.settings.folders = vec![path.clone()];
+        self.show_sidebar(SidebarTab::Files);
+        self.rescan();
+        if self.doc.is_none()
+            && let Some(readme) = readme(&path)
+        {
+            self.open(readme);
         }
     }
 
@@ -386,11 +578,14 @@ impl App {
     }
 
     fn recount(&mut self) {
-        let (Some(find), Some(doc)) = (&mut self.find, &self.doc) else {
-            return;
-        };
-        let units = doc.units();
-        find.recount(units.iter().map(render::unit_texts), self.first_visible);
+        let Some(find) = &mut self.find else { return };
+        match &self.doc {
+            Some(doc) => {
+                let units = doc.units();
+                find.recount(units.iter().map(render::unit_texts), self.first_visible);
+            }
+            None => find.recount(std::iter::empty(), 0),
+        }
     }
 
     /// Scroll the current match into view when it is off screen.
@@ -452,6 +647,7 @@ impl App {
                     self.visit(path);
                 }
             }
+            file_action::OPEN_TAB => self.open_in_tab(path),
             file_action::REVEAL => reveal(&path),
             file_action::COPY_PATH => self.copy(&path.to_string_lossy(), None),
             file_action::REFRESH => self.rescan(),
@@ -486,6 +682,26 @@ impl App {
             _ => {}
         }
     }
+
+    pub fn tab_action(&mut self, i: usize, id: u8) {
+        self.menu = None;
+        let path = self.tabs.get(i).and_then(|t| t.path.clone());
+        match id {
+            tab_action::CLOSE => self.close_tab(i),
+            tab_action::CLOSE_OTHERS => self.close_other_tabs(i),
+            tab_action::COPY_PATH => {
+                if let Some(path) = path {
+                    self.copy(&path.to_string_lossy(), None);
+                }
+            }
+            tab_action::REVEAL => {
+                if let Some(path) = path {
+                    reveal(&path);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// File tree context menu actions.
@@ -495,6 +711,7 @@ pub mod file_action {
     pub const COPY_PATH: u8 = 2;
     pub const REFRESH: u8 = 3;
     pub const REMOVE: u8 = 4;
+    pub const OPEN_TAB: u8 = 5;
 }
 
 /// Outline context menu actions.
@@ -502,6 +719,203 @@ pub mod heading_action {
     pub const GO: u8 = 0;
     pub const COPY_LINK: u8 = 1;
     pub const COPY_TITLE: u8 = 2;
+}
+
+/// Tab context menu actions.
+pub mod tab_action {
+    pub const CLOSE: u8 = 0;
+    pub const CLOSE_OTHERS: u8 = 1;
+    pub const COPY_PATH: u8 = 2;
+    pub const REVEAL: u8 = 3;
+}
+
+/// Read and prepare a document of any supported kind.
+fn load(path: &Path) -> Result<Doc, String> {
+    let name = file_name(path);
+    let kind = workspace::kind(path).unwrap_or(FileKind::Code("text"));
+    if kind == FileKind::Image {
+        if load_image(path).is_err() {
+            return Err(format!("{name} is not an image MD Star can show."));
+        }
+        let ir = single(
+            path,
+            BlockIr {
+                kind: "paragraph".into(),
+                inlines: vec![InlineIr {
+                    id: "image".into(),
+                    range: None,
+                    kind: "image".into(),
+                    text: None,
+                    children: Vec::new(),
+                    url: Some(name.clone()),
+                    title: None,
+                    alt: Some(name.clone()),
+                }],
+                ..block("image", "paragraph")
+            },
+        );
+        return Ok(Doc {
+            images: load_images(&ir, path),
+            path: path.to_path_buf(),
+            kind,
+            ir,
+            title: name,
+            words: 0,
+        });
+    }
+    let size = std::fs::metadata(path)
+        .map_err(|e| format!("{} could not be opened: {e}", path.display()))?
+        .len();
+    if size > MAX_TEXT {
+        return Err(format!("{name} is too large to show ({} MB).", size / (1024 * 1024)));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("{} could not be opened: {e}", path.display()))?;
+    if bytes.iter().take(8192).any(|b| *b == 0) {
+        return Err(format!("{name} is a binary file."));
+    }
+    let source = String::from_utf8_lossy(&bytes).into_owned();
+    let (ir, title, words) = match kind {
+        FileKind::Markdown => {
+            let ir = parse_document_ir_with_diagnostics(&source, &path.to_string_lossy())
+                .map_err(|e| format!("{name} could not be read as Markdown: {e}"))?;
+            let title = ir
+                .outline
+                .iter()
+                .find(|item| item.level == 1)
+                .map(|item| item.text.clone())
+                .unwrap_or_else(|| name.clone());
+            let words = render::word_count(&ir.blocks);
+            (ir, title, words)
+        }
+        FileKind::Code("csv") => {
+            let lines = source.lines().count();
+            (single(path, csv_table(&source, path)), name.clone(), lines)
+        }
+        FileKind::Code(language) => {
+            // Show JSON formatted when it is minified onto a few lines.
+            let text = match language {
+                "json" if source.lines().count() < 4 && source.len() > 200 => {
+                    serde_json::from_str::<serde_json::Value>(&source)
+                        .ok()
+                        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                        .unwrap_or(source)
+                }
+                _ => source,
+            };
+            let lines = text.lines().count();
+            let code = BlockIr {
+                language: Some(language.into()),
+                code: Some(text.trim_end_matches('\n').to_owned()),
+                ..block("code", "code")
+            };
+            (single(path, code), name.clone(), lines)
+        }
+        FileKind::Image => unreachable!(),
+    };
+    Ok(Doc {
+        images: load_images(&ir, path),
+        path: path.to_path_buf(),
+        kind,
+        ir,
+        title,
+        words,
+    })
+}
+
+fn block(id: &str, kind: &str) -> BlockIr {
+    BlockIr {
+        id: id.into(),
+        range: None,
+        kind: kind.into(),
+        level: None,
+        inlines: Vec::new(),
+        children: Vec::new(),
+        ordered: None,
+        start: None,
+        items: Vec::new(),
+        language: None,
+        meta: None,
+        code: None,
+        headers: Vec::new(),
+        rows: Vec::new(),
+        raw: None,
+    }
+}
+
+fn single(path: &Path, block: BlockIr) -> DocumentIr {
+    DocumentIr {
+        schema_version: DOCUMENT_IR_SCHEMA_VERSION,
+        document_id: path.to_string_lossy().into_owned(),
+        origin: path.to_string_lossy().into_owned(),
+        blocks: vec![block],
+        outline: Vec::new(),
+        diagnostics: Vec::new(),
+    }
+}
+
+/// A CSV or TSV file as a table, the first row as its header.
+fn csv_table(source: &str, path: &Path) -> BlockIr {
+    let tab = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("tsv"));
+    let cell = |text: String| -> Vec<InlineIr> {
+        vec![InlineIr {
+            id: String::new(),
+            range: None,
+            kind: "text".into(),
+            text: Some(text),
+            children: Vec::new(),
+            url: None,
+            title: None,
+            alt: None,
+        }]
+    };
+    let mut rows = source
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(MAX_CSV_ROWS + 1)
+        .map(|line| split_csv(line, if tab { '\t' } else { ',' }).into_iter().map(cell).collect::<Vec<_>>());
+    let headers = rows.next().unwrap_or_default();
+    BlockIr {
+        headers,
+        rows: rows.collect(),
+        ..block("table", "table")
+    }
+}
+
+/// One CSV line's fields; quoted fields may hold the separator and `""`.
+fn split_csv(line: &str, separator: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                field.push('"');
+                chars.next();
+            }
+            '"' => quoted = !quoted,
+            c if c == separator && !quoted => out.push(std::mem::take(&mut field)),
+            c => field.push(c),
+        }
+    }
+    out.push(field);
+    out
+}
+
+/// A folder's README, if it has one.
+fn readme(dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.is_file()
+                && p.file_stem()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("readme"))
+                && workspace::is_markdown(p)
+        })
 }
 
 /// `file.md#anchor` for a heading, the form Markdown links use.
@@ -514,7 +928,7 @@ fn section_link(doc: &Doc, id: &str) -> Option<String> {
 pub enum LinkAction {
     /// `#heading` in this document.
     Anchor(String),
-    /// A Markdown file next to this one, optionally at a heading.
+    /// A file the reader can show, next to this one, optionally at a heading.
     Document(PathBuf, Option<String>),
     /// A web or mail link for the default app.
     External(String),
@@ -522,8 +936,8 @@ pub enum LinkAction {
 }
 
 /// What a link target means. Only http(s) and mailto leave the app; other
-/// schemes (file:, javascript:, custom app schemes) and non-Markdown files
-/// are ignored, so a document cannot launch arbitrary apps or files.
+/// schemes (file:, javascript:, custom app schemes) and files the reader
+/// cannot show are ignored, so a document cannot launch arbitrary apps.
 pub fn link_action(target: &str, current: Option<&Path>) -> LinkAction {
     let target = target.trim();
     if let Some(anchor) = target.strip_prefix('#') {
@@ -545,7 +959,7 @@ pub fn link_action(target: &str, current: Option<&Path>) -> LinkAction {
     };
     let base = current.and_then(Path::parent).unwrap_or(Path::new("."));
     let path = base.join(file.replace("%20", " "));
-    if workspace::is_markdown(&path) {
+    if workspace::kind(&path).is_some() {
         LinkAction::Document(path, anchor)
     } else {
         LinkAction::Ignore
@@ -604,4 +1018,85 @@ fn load_images(doc: &DocumentIr, path: &Path) -> HashMap<String, Image> {
             load_image(&file).ok().map(|image| (url, image))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_fields_respect_quotes() {
+        assert_eq!(split_csv(r#"a,"b, c","d ""q""",e"#, ','), ["a", "b, c", "d \"q\"", "e"]);
+        assert_eq!(split_csv("x\ty", '\t'), ["x", "y"]);
+    }
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mdstar-app-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn tabs_keep_their_documents_history_and_place() {
+        let dir = temp("tabs");
+        for (name, body) in [("a.md", "# A\n\n[b](b.md)\n"), ("b.md", "# B\n"), ("c.md", "# C\n")] {
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+        let mut app = App::new(Settings::default(), None);
+        app.open(dir.join("a.md"));
+        app.first_visible = 3;
+        app.follow_link("b.md".into());
+        assert_eq!(app.tabs.len(), 2, "a linked document opens in a new tab");
+        assert_eq!(app.active, 1);
+        app.visit(dir.join("c.md"));
+        assert_eq!(app.back, [dir.join("b.md")]);
+        app.switch_tab(0);
+        assert_eq!(app.path(), Some(dir.join("a.md").as_path()));
+        assert_eq!(app.jump.0, 3, "the first tab returns to its place");
+        assert!(app.back.is_empty(), "history belongs to its tab");
+        app.follow_link("b.md".into());
+        assert_eq!((app.tabs.len(), app.active), (3, 1), "new tabs open beside the current one");
+        app.open_in_tab(dir.join("c.md"));
+        assert_eq!(app.active, 2, "an open document switches to its tab");
+        app.close_tab(2);
+        assert_eq!((app.tabs.len(), app.active), (2, 1));
+        assert_eq!(app.path(), Some(dir.join("b.md").as_path()));
+        app.close_other_tabs(1);
+        assert_eq!(app.tabs.len(), 1);
+        app.close_tab(0);
+        assert!(app.doc.is_none() && app.tabs.len() == 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn folders_open_their_readme_and_show_every_supported_file() {
+        let dir = temp("folder");
+        std::fs::write(dir.join("README.md"), "# Read me\n").unwrap();
+        std::fs::write(dir.join("data.json"), r#"{"a":[1,2,3],"b":{"c":"d"}}"#).unwrap();
+        std::fs::write(dir.join("table.csv"), "name,n\nx,1\n\"y, z\",2\n").unwrap();
+        std::fs::write(dir.join("blob.bin"), [0u8, 1, 2]).unwrap();
+        let mut app = App::new(Settings::default(), None);
+        app.open_folder(dir.clone());
+        assert_eq!(app.doc.as_ref().unwrap().title, "Read me");
+        let names: Vec<&str> = app.tree[0]
+            .children
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
+        assert_eq!(names, ["data.json", "README.md", "table.csv"]);
+        app.visit(dir.join("data.json"));
+        let doc = app.doc.as_ref().unwrap();
+        assert_eq!(doc.kind, FileKind::Code("json"));
+        let table = app.doc.as_ref().map(|d| d.units().len());
+        assert_eq!(table, Some(1));
+        app.visit(dir.join("table.csv"));
+        let block = &app.doc.as_ref().unwrap().ir.blocks[0];
+        assert_eq!((block.kind.as_str(), block.rows.len()), ("table", 2));
+        app.visit(dir.join("blob.bin"));
+        assert!(app.error.as_deref().unwrap().contains("binary"));
+        std::fs::remove_dir_all(dir).ok();
+    }
 }
