@@ -53,6 +53,13 @@ pub enum Mode {
 pub enum Msg {
     /// Typing paused: save if no edit came after edit number `n`.
     Autosave(u64),
+    /// Files changed on disk; `structural` when files appeared, went or
+    /// were renamed.
+    Changed { paths: Vec<PathBuf>, structural: bool },
+    /// Changes settled: rescan the workspace if no later change came.
+    Rescan(u64),
+    /// The system asked to open these files or folders (Finder, the Dock).
+    Open(Vec<PathBuf>),
 }
 
 /// How long typing must pause before an autosave.
@@ -168,6 +175,11 @@ pub struct App {
     pub slash: Option<Slash>,
     /// A `/` the reader dismissed with Escape, so it stays closed.
     slash_dismissed: Option<usize>,
+
+    /// Watches workspace folders and open files for outside changes.
+    watcher: Option<notify::RecommendedWatcher>,
+    watched: Vec<(PathBuf, bool)>,
+    rescans: u64,
 }
 
 impl App {
@@ -274,6 +286,7 @@ impl App {
             }
         }
         self.tabs[self.active].path = Some(path);
+        self.sync_watches();
         self.copied = None;
         self.generation = self.generation.wrapping_add(1);
         self.first_visible = 0;
@@ -478,6 +491,106 @@ impl App {
                 self.save();
             }
             Msg::Autosave(_) => {}
+            Msg::Changed { paths, structural } => self.changed_on_disk(paths, structural),
+            Msg::Rescan(n) if n == self.rescans => {
+                self.rescan();
+            }
+            Msg::Rescan(_) => {}
+            Msg::Open(paths) => {
+                for path in paths {
+                    if path.is_dir() {
+                        self.open_folder(path);
+                    } else {
+                        self.open_in_tab(path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Watching
+
+    /// Watch the workspace folders, and open files outside them, so outside
+    /// changes show up. Only with a message sender (the running app).
+    pub fn sync_watches(&mut self) {
+        let Some(sender) = self.sender.clone() else { return };
+        let mut wanted: Vec<(PathBuf, bool)> = self.tree.iter().map(|r| (r.path.clone(), true)).collect();
+        let open = self
+            .path()
+            .map(Path::to_path_buf)
+            .into_iter()
+            .chain(self.tabs.iter().filter_map(|t| t.path.clone()));
+        for path in open {
+            if !wanted.iter().any(|(w, deep)| *deep && path.starts_with(w)) && !wanted.iter().any(|(w, _)| *w == path) {
+                wanted.push((path, false));
+            }
+        }
+        if wanted == self.watched && self.watcher.is_some() {
+            return;
+        }
+        use notify::{EventKind, RecursiveMode, Watcher, event::ModifyKind};
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            let Ok(event) = event else { return };
+            let structural = match event.kind {
+                EventKind::Create(_) | EventKind::Remove(_) => true,
+                EventKind::Modify(ModifyKind::Name(_)) => true,
+                EventKind::Modify(_) | EventKind::Any | EventKind::Other => false,
+                EventKind::Access(_) => return,
+            };
+            let _ = sender.send(Msg::Changed {
+                paths: event.paths,
+                structural,
+            });
+        });
+        let Ok(mut watcher) = watcher else { return };
+        for (path, deep) in &wanted {
+            let mode = if *deep { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+            let _ = watcher.watch(path, mode);
+        }
+        self.watcher = Some(watcher);
+        self.watched = wanted;
+    }
+
+    /// Reload open documents that changed on disk, keeping their place, and
+    /// rescan the tree when files came or went. Edits are never discarded:
+    /// a document with unsaved edits shows the conflict banner instead.
+    fn changed_on_disk(&mut self, paths: Vec<PathBuf>, structural: bool) {
+        for path in &paths {
+            let changed = |doc: &Doc| {
+                doc.path == *path
+                    && std::fs::read_to_string(path).is_ok_and(|disk| disk != doc.saved)
+            };
+            if self.doc.as_ref().is_some_and(&changed) {
+                if self.doc.as_ref().is_some_and(Doc::dirty) {
+                    self.save_error = Some(format!(
+                        "{} changed on disk since it was opened.",
+                        file_name(path)
+                    ));
+                } else {
+                    self.reload();
+                }
+            }
+            for tab in &mut self.tabs {
+                let Some(state) = tab.saved.as_mut() else { continue };
+                if state.doc.as_ref().is_some_and(|d| changed(d) && !d.dirty())
+                    && let Ok(doc) = load(path)
+                {
+                    state.doc = Some(doc);
+                }
+            }
+        }
+        let in_tree = paths
+            .iter()
+            .any(|p| self.tree.iter().any(|root| p.starts_with(&root.path)));
+        if structural && in_tree {
+            self.rescans += 1;
+            if let Some(sender) = self.sender.clone() {
+                let n = self.rescans;
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    let _ = sender.send(Msg::Rescan(n));
+                });
+            }
         }
     }
 
@@ -855,6 +968,7 @@ impl App {
             roots.push(parent.to_path_buf());
         }
         self.tree = roots.iter().filter(|r| r.is_dir()).map(|r| workspace::scan(r)).collect();
+        self.sync_watches();
     }
 
     /// Whether `path` is a folder the user added (rather than the open
@@ -1523,6 +1637,38 @@ mod tests {
         app.edit("# Mine, again\n".into());
         app.new_tab();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Mine, again\n");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn outside_changes_reload_clean_documents_and_flag_edited_ones() {
+        let dir = temp("watch");
+        let file = dir.join("w.md");
+        std::fs::write(&file, "# One\n").unwrap();
+        let mut app = App::new(Settings::default(), None);
+        app.open(file.clone());
+        app.first_visible = 0;
+        // Our own save is not a change.
+        std::fs::write(&file, "# One\n").unwrap();
+        app.message(Msg::Changed {
+            paths: vec![file.clone()],
+            structural: false,
+        });
+        assert_eq!(app.doc.as_ref().unwrap().title, "One");
+        std::fs::write(&file, "# Two\n").unwrap();
+        app.message(Msg::Changed {
+            paths: vec![file.clone()],
+            structural: false,
+        });
+        assert_eq!(app.doc.as_ref().unwrap().title, "Two", "a clean document reloads");
+        app.edit("# Mine\n".into());
+        std::fs::write(&file, "# Three\n").unwrap();
+        app.message(Msg::Changed {
+            paths: vec![file.clone()],
+            structural: false,
+        });
+        assert_eq!(app.doc.as_ref().unwrap().source, "# Mine\n", "edits are kept");
+        assert!(app.save_error.as_deref().unwrap().contains("changed on disk"));
         std::fs::remove_dir_all(dir).ok();
     }
 

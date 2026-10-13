@@ -9,6 +9,8 @@ mod app;
 mod compose;
 mod find;
 mod highlight;
+#[cfg(target_os = "macos")]
+mod macos;
 mod render;
 mod settings;
 mod view;
@@ -379,7 +381,9 @@ fn args() -> Result<Args, String> {
                 std::process::exit(0);
             }
             file if !file.starts_with('-') => a.files.push(PathBuf::from(file)),
-            other => return Err(format!("unknown option {other}")),
+            // Launched from Finder or the Dock, macOS may add its own flags
+            // (such as -psn_…); never refuse to start over an option.
+            other => eprintln!("MD Star: ignoring option {other}"),
         }
     }
     Ok(a)
@@ -494,7 +498,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .theme_with(theme)
         .commands(commands())
         .desktop(menus(), |_: &mut App, _| {})
-        .messages(|app: &mut App, sender| app.sender = Some(sender), App::message)
+        .messages(
+            |app: &mut App, sender| {
+                app.sender = Some(sender);
+                app.sync_watches();
+            },
+            App::message,
+        )
+        .before_launch(|app: &mut App| {
+            #[cfg(target_os = "macos")]
+            if let Some(sender) = app.sender.clone() {
+                macos::receive_opened_files(sender);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = app;
+        })
         // Edits are saved as you go; save what remains before closing.
         .on_close_request(|app: &mut App, _| {
             app.save_all();
