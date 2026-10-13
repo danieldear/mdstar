@@ -11,15 +11,18 @@ use mdstar_core::document_ir::{
     BlockIr, DOCUMENT_IR_SCHEMA_VERSION, DocumentIr, InlineIr, parse_document_ir_with_diagnostics,
 };
 use volt_ui_kit::{
+    declarative::{EditKey, TextSelection},
     graphics::Image,
     native::{
-        clipboard,
+        UiSender, clipboard,
         file_dialog::{self, FileDialogOptions},
+        files::{SavePolicy, save_text_file},
         load_image,
     },
 };
 
 use crate::{
+    compose::{self, Slash},
     find::Find,
     render::{self, action},
     settings::{Settings, SidebarTab, Theme},
@@ -32,6 +35,28 @@ pub const SIDE_WINDOW: Range<usize> = 0..40;
 const MAX_TEXT: u64 = 16 * 1024 * 1024;
 /// CSV rows shown as a table.
 const MAX_CSV_ROWS: usize = 5000;
+
+/// How the document area shows the current document.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mode {
+    /// The rendered document only.
+    #[default]
+    Preview,
+    /// Source on the left, live preview on the right.
+    Split,
+    /// The source only.
+    Source,
+}
+
+/// Work finished off the UI thread.
+#[derive(Debug)]
+pub enum Msg {
+    /// Typing paused: save if no edit came after edit number `n`.
+    Autosave(u64),
+}
+
+/// How long typing must pause before an autosave.
+const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1200);
 
 /// What a context menu was opened on.
 #[derive(Clone, Debug, PartialEq)]
@@ -51,11 +76,21 @@ pub struct Doc {
     /// Words for Markdown, lines for code.
     pub words: usize,
     pub images: HashMap<String, Image>,
+    /// The text being edited, and the text last read from or written to disk.
+    pub source: String,
+    pub saved: String,
 }
 
 impl Doc {
     pub fn units(&self) -> Vec<render::Unit<'_>> {
         render::units(&self.ir.blocks)
+    }
+    pub fn dirty(&self) -> bool {
+        self.source != self.saved
+    }
+    /// Text documents can be edited; images cannot.
+    pub fn editable(&self) -> bool {
+        self.kind != FileKind::Image
     }
 }
 
@@ -116,6 +151,23 @@ pub struct App {
 
     pub find: Option<Find>,
     pub menu: Option<(MenuTarget, [f32; 2])>,
+
+    pub mode: Mode,
+    /// The editor's share of a split view.
+    pub split: f32,
+    /// Delivers autosave timers; `None` in tests and snapshots.
+    pub sender: Option<UiSender<Msg>>,
+    /// Edits made so far, so a stale autosave timer does nothing.
+    edits: u64,
+    pub save_error: Option<String>,
+
+    /// The editor's last reported selection, and a selection to apply:
+    /// (start, end, request number).
+    pub selection: Option<TextSelection>,
+    pub select: (usize, usize, u32),
+    pub slash: Option<Slash>,
+    /// A `/` the reader dismissed with Escape, so it stays closed.
+    slash_dismissed: Option<usize>,
 }
 
 impl App {
@@ -123,6 +175,7 @@ impl App {
         let mut app = App {
             expanded: settings.expanded.iter().cloned().collect(),
             side_window: SIDE_WINDOW,
+            split: 0.5,
             tabs: vec![Tab::default()],
             settings,
             settings_path,
@@ -170,6 +223,19 @@ impl App {
         }
     }
 
+    /// The sidebar divider moved: keep the width, saved with other settings.
+    pub fn resize_sidebar(&mut self, width: f32) {
+        self.settings.sidebar_width = width.round().clamp(
+            *crate::settings::SIDEBAR_WIDTHS.start(),
+            *crate::settings::SIDEBAR_WIDTHS.end(),
+        );
+    }
+
+    /// Save settings changed without saving (the sidebar width), on quit.
+    pub fn save_settings_now(&mut self) {
+        self.save_settings();
+    }
+
     pub fn toggle_sidebar(&mut self) {
         self.configure(|s| s.sidebar = !s.sidebar);
     }
@@ -189,6 +255,8 @@ impl App {
     pub fn open(&mut self, path: PathBuf) {
         self.menu = None;
         self.ensure_tab();
+        self.flush();
+        self.save_error = None;
         match load(&path) {
             Ok(doc) => {
                 self.window = 0..doc.units().len().min(30);
@@ -347,6 +415,315 @@ impl App {
         }
     }
 
+    // Editing
+
+    /// Whether the editor is showing.
+    pub fn editing(&self) -> bool {
+        self.mode != Mode::Preview && self.doc.as_ref().is_some_and(Doc::editable)
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.menu = None;
+        self.mode = mode;
+    }
+
+    /// Edit or stop editing: Markdown edits beside its preview, other text
+    /// on its own.
+    pub fn toggle_edit(&mut self) {
+        let markdown = self.doc.as_ref().is_some_and(|d| d.kind == FileKind::Markdown);
+        self.set_mode(match self.mode {
+            Mode::Preview if markdown => Mode::Split,
+            Mode::Preview => Mode::Source,
+            _ => Mode::Preview,
+        });
+    }
+
+    /// The editor's text changed: re-render the preview and schedule a save.
+    pub fn edit(&mut self, text: String) {
+        let Some(doc) = &mut self.doc else { return };
+        if doc.source == text {
+            return;
+        }
+        match build(&doc.path, doc.kind, text) {
+            Ok(mut next) => {
+                next.saved = std::mem::take(&mut doc.saved);
+                // Reuse loaded images unless the document refers to new ones.
+                if same_images(&next.ir, &doc.ir) {
+                    next.images = std::mem::take(&mut doc.images);
+                } else {
+                    next.images = load_images(&next.ir, &next.path);
+                }
+                *doc = next;
+            }
+            Err(e) => self.save_error = Some(e),
+        }
+        let rows = self.doc.as_ref().map_or(0, |d| d.units().len());
+        if self.window.end > rows {
+            self.window = self.window.start.min(rows)..rows;
+        }
+        self.recount();
+        self.edits += 1;
+        if let Some(sender) = self.sender.clone() {
+            let n = self.edits;
+            std::thread::spawn(move || {
+                std::thread::sleep(AUTOSAVE);
+                let _ = sender.send(Msg::Autosave(n));
+            });
+        }
+    }
+
+    pub fn message(&mut self, msg: Msg) {
+        match msg {
+            Msg::Autosave(n) if n == self.edits => {
+                self.save();
+            }
+            Msg::Autosave(_) => {}
+        }
+    }
+
+    /// Write the current document if it changed. Returns false on failure.
+    pub fn save(&mut self) -> bool {
+        let Some(doc) = &mut self.doc else { return true };
+        match write(doc) {
+            Ok(()) => {
+                self.save_error = None;
+                true
+            }
+            Err(e) => {
+                self.save_error = Some(e);
+                false
+            }
+        }
+    }
+
+    /// Save the current document before leaving it.
+    fn flush(&mut self) {
+        if self.doc.as_ref().is_some_and(Doc::dirty) {
+            self.save();
+        }
+    }
+
+    /// Save every tab, before quitting.
+    pub fn save_all(&mut self) -> bool {
+        let mut ok = self.save();
+        for tab in &mut self.tabs {
+            if let Some(doc) = tab.saved.as_mut().and_then(|s| s.doc.as_mut()) {
+                ok &= write(doc).is_ok();
+            }
+        }
+        ok
+    }
+
+    /// The file changed on disk since it was read: keep this version.
+    pub fn overwrite(&mut self) {
+        if let Some(doc) = &mut self.doc {
+            doc.saved = std::fs::read_to_string(&doc.path).unwrap_or_default();
+        }
+        self.save();
+    }
+
+    /// The file changed on disk: drop the edits and show the file.
+    pub fn discard_edits(&mut self) {
+        if let Some(doc) = &mut self.doc {
+            doc.source = doc.saved.clone();
+        }
+        self.save_error = None;
+        self.reload();
+    }
+
+    // Writing helpers
+
+    /// The editor's selection moved: open, update or close the `/` menu,
+    /// and in a split view keep the edited block in the preview.
+    pub fn selection_changed(&mut self, s: TextSelection) {
+        let moved = self.selection.is_none_or(|old| old.caret_at != s.caret_at);
+        self.selection = Some(s);
+        if moved && self.mode == Mode::Split {
+            self.follow_caret(s.caret_at);
+        }
+        let found = self
+            .doc
+            .as_ref()
+            .filter(|_| s.start == s.end && s.caret_at <= self.doc.as_ref().map_or(0, |d| d.source.len()))
+            .and_then(|d| compose::slash_at(&d.source, s.caret_at))
+            .filter(|(start, _)| self.slash_dismissed != Some(*start));
+        self.slash = found.map(|(start, query)| {
+            let index = match &self.slash {
+                Some(open) if open.start == start && open.query == query => open.index,
+                _ => 0,
+            };
+            // Below the caret, or above it when the editor has no room.
+            let height = compose::menu_height(compose::matching(&query).len());
+            let below = s.caret[1] + s.caret[3] + 6.;
+            let bottom = s.bounds[1] + s.bounds[3];
+            let y = if below + height > bottom && s.caret[1] - height - 6. >= s.bounds[1] {
+                s.caret[1] - height - 6.
+            } else {
+                below
+            };
+            Slash {
+                start,
+                query,
+                index,
+                at: [s.caret[0], y],
+            }
+        });
+        if self.slash.is_none() && self.slash_dismissed.is_some_and(|d| {
+            self.doc.as_ref().is_none_or(|doc| compose::slash_at(&doc.source, s.caret_at).is_none_or(|(at, _)| at != d))
+        }) {
+            self.slash_dismissed = None;
+        }
+    }
+
+    /// Scroll the preview to the block the caret is in, if it is off screen.
+    fn follow_caret(&mut self, caret: usize) {
+        let Some(doc) = &self.doc else { return };
+        let units = doc.units();
+        let row = units
+            .iter()
+            .position(|u| render::source_range(u).is_some_and(|r| caret <= r.end));
+        let Some(row) = row.or_else(|| units.len().checked_sub(1)) else {
+            return;
+        };
+        let visible = self.first_visible..self.window.end.saturating_sub(4).max(self.first_visible + 1);
+        if !visible.contains(&row) {
+            self.jump_to(row.saturating_sub(1));
+        }
+    }
+
+    /// Keys the editor hands over: arrows and Enter for an open menu, Enter
+    /// at the end of a list item.
+    pub fn editor_keys(&self) -> Vec<EditKey> {
+        if self.slash.is_some() {
+            return vec![EditKey::Up, EditKey::Down, EditKey::Enter];
+        }
+        let continues = match (&self.doc, self.selection) {
+            (Some(doc), Some(s)) if s.start == s.end && s.caret_at <= doc.source.len() => {
+                compose::continue_list(&doc.source, s.caret_at).is_some()
+            }
+            _ => false,
+        };
+        if continues { vec![EditKey::Enter] } else { Vec::new() }
+    }
+
+    pub fn editor_key(&mut self, key: EditKey) {
+        if let Some(slash) = &mut self.slash {
+            let n = compose::matching(&slash.query).len().max(1);
+            match key {
+                EditKey::Up => slash.index = (slash.index + n - 1) % n,
+                EditKey::Down => slash.index = (slash.index + 1) % n,
+                EditKey::Enter => {
+                    let index = slash.index;
+                    self.apply_slash(index);
+                }
+                _ => {}
+            }
+            return;
+        }
+        if key == EditKey::Enter {
+            self.continue_list();
+        }
+    }
+
+    /// Escape: close the `/` menu, leaving what was typed.
+    pub fn cancel_slash(&mut self) {
+        if let Some(slash) = self.slash.take() {
+            self.slash_dismissed = Some(slash.start);
+        }
+    }
+
+    /// Replace `/query` with command `index` of the matching commands.
+    pub fn apply_slash(&mut self, index: usize) {
+        let (Some(slash), Some(doc), Some(s)) = (self.slash.take(), &self.doc, self.selection) else {
+            return;
+        };
+        let Some(command) = compose::matching(&slash.query).get(index).copied() else {
+            return;
+        };
+        let end = s.caret_at.min(doc.source.len());
+        let mut text = doc.source.clone();
+        text.replace_range(slash.start..end, command.insert);
+        let (a, b) = command.select;
+        self.replace_text(text, slash.start + a, slash.start + b);
+    }
+
+    fn continue_list(&mut self) {
+        let (Some(doc), Some(s)) = (&self.doc, self.selection) else { return };
+        let caret = s.caret_at.min(doc.source.len());
+        let Some(marker) = compose::continue_list(&doc.source, caret) else {
+            return;
+        };
+        let mut text = doc.source.clone();
+        if marker.is_empty() {
+            // Enter on an empty item ends the list: clear the marker.
+            let line_start = text[..caret].rfind('\n').map_or(0, |i| i + 1);
+            text.replace_range(line_start..caret, "");
+            self.replace_text(text, line_start, line_start);
+        } else {
+            let insert = format!("\n{marker}");
+            text.insert_str(caret, &insert);
+            let at = caret + insert.len();
+            self.replace_text(text, at, at);
+        }
+    }
+
+    /// Wrap the selection in `before` and `after` (⌘B, ⌘I), or insert the
+    /// pair with the caret between when nothing is selected.
+    pub fn wrap_selection(&mut self, before: &str, after: &str) {
+        if !self.editing() {
+            return;
+        }
+        let (Some(doc), Some(s)) = (&self.doc, self.selection) else { return };
+        let (start, end) = (s.start.min(doc.source.len()), s.end.min(doc.source.len()));
+        let selected = &doc.source[start..end];
+        let mut text = doc.source.clone();
+        // Already wrapped: unwrap.
+        if selected.len() >= before.len() + after.len()
+            && selected.starts_with(before)
+            && selected.ends_with(after)
+        {
+            let inner = selected[before.len()..selected.len() - after.len()].to_owned();
+            text.replace_range(start..end, &inner);
+            self.replace_text(text, start, start + inner.len());
+            return;
+        }
+        text.replace_range(start..end, &format!("{before}{selected}{after}"));
+        self.replace_text(text, start + before.len(), end + before.len());
+    }
+
+    /// Insert a link around the selection, selecting the URL to type over.
+    pub fn insert_link(&mut self) {
+        if !self.editing() {
+            return;
+        }
+        let (Some(doc), Some(s)) = (&self.doc, self.selection) else { return };
+        let (start, end) = (s.start.min(doc.source.len()), s.end.min(doc.source.len()));
+        let label = if start == end { "text" } else { &doc.source[start..end] };
+        let link = format!("[{label}](https://)");
+        let mut text = doc.source.clone();
+        text.replace_range(start..end, &link);
+        let url = start + label.len() + 3;
+        self.replace_text(text, url, url + 8);
+    }
+
+    /// Replace the whole text from a writing helper and select `start..end`.
+    fn replace_text(&mut self, text: String, start: usize, end: usize) {
+        self.edit(text);
+        self.select = (start, end, self.select.2.wrapping_add(1));
+    }
+
+    /// Whether tab `i` has unsaved edits.
+    pub fn tab_dirty(&self, i: usize) -> bool {
+        if i == self.active {
+            return self.doc.as_ref().is_some_and(Doc::dirty);
+        }
+        self.tabs
+            .get(i)
+            .and_then(|t| t.saved.as_ref())
+            .and_then(|s| s.doc.as_ref())
+            .is_some_and(Doc::dirty)
+    }
+
     // Tabs
 
     fn ensure_tab(&mut self) {
@@ -376,6 +753,7 @@ impl App {
     /// An empty tab after the current one.
     pub fn new_tab(&mut self) {
         self.ensure_tab();
+        self.flush();
         let state = self.stash();
         self.tabs[self.active].saved = Some(state);
         self.active += 1;
@@ -387,6 +765,7 @@ impl App {
         if i == self.active || i >= self.tabs.len() {
             return;
         }
+        self.flush();
         let state = self.stash();
         self.tabs[self.active].saved = Some(state);
         self.active = i;
@@ -406,6 +785,11 @@ impl App {
         self.menu = None;
         if i >= self.tabs.len() {
             return;
+        }
+        if i == self.active {
+            self.flush();
+        } else if let Some(doc) = self.tabs[i].saved.as_mut().and_then(|s| s.doc.as_mut()) {
+            let _ = write(doc);
         }
         if self.tabs.len() == 1 {
             self.stash();
@@ -445,6 +829,7 @@ impl App {
     }
 
     fn restore(&mut self, state: TabState) {
+        self.save_error = None;
         self.window = 0..state.doc.as_ref().map_or(0, |d| d.units().len().min(30));
         self.doc = state.doc;
         self.error = state.error;
@@ -729,6 +1114,32 @@ pub mod tab_action {
     pub const REVEAL: u8 = 3;
 }
 
+/// Write a document's edits, refusing to overwrite changes made on disk
+/// since it was read.
+fn write(doc: &mut Doc) -> Result<(), String> {
+    if !doc.dirty() {
+        return Ok(());
+    }
+    match save_text_file(&doc.path, &doc.source, SavePolicy::MatchContents(&doc.saved)) {
+        Ok(()) => {
+            doc.saved = doc.source.clone();
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+            "{} changed on disk since it was opened.",
+            file_name(&doc.path)
+        )),
+        Err(e) => Err(format!("{} could not be saved: {e}", file_name(&doc.path))),
+    }
+}
+
+fn same_images(a: &DocumentIr, b: &DocumentIr) -> bool {
+    let (mut x, mut y) = (Vec::new(), Vec::new());
+    render::image_urls(&a.blocks, &mut x);
+    render::image_urls(&b.blocks, &mut y);
+    x == y
+}
+
 /// Read and prepare a document of any supported kind.
 fn load(path: &Path) -> Result<Doc, String> {
     let name = file_name(path);
@@ -761,6 +1172,8 @@ fn load(path: &Path) -> Result<Doc, String> {
             ir,
             title: name,
             words: 0,
+            source: String::new(),
+            saved: String::new(),
         });
     }
     let size = std::fs::metadata(path)
@@ -774,6 +1187,15 @@ fn load(path: &Path) -> Result<Doc, String> {
         return Err(format!("{name} is a binary file."));
     }
     let source = String::from_utf8_lossy(&bytes).into_owned();
+    let mut doc = build(path, kind, source)?;
+    doc.saved = doc.source.clone();
+    doc.images = load_images(&doc.ir, path);
+    Ok(doc)
+}
+
+/// A document from its text. `saved` and `images` are left for the caller.
+fn build(path: &Path, kind: FileKind, source: String) -> Result<Doc, String> {
+    let name = file_name(path);
     let (ir, title, words) = match kind {
         FileKind::Markdown => {
             let ir = parse_document_ir_with_diagnostics(&source, &path.to_string_lossy())
@@ -798,9 +1220,9 @@ fn load(path: &Path) -> Result<Doc, String> {
                     serde_json::from_str::<serde_json::Value>(&source)
                         .ok()
                         .and_then(|v| serde_json::to_string_pretty(&v).ok())
-                        .unwrap_or(source)
+                        .unwrap_or_else(|| source.clone())
                 }
-                _ => source,
+                _ => source.clone(),
             };
             let lines = text.lines().count();
             let code = BlockIr {
@@ -810,15 +1232,17 @@ fn load(path: &Path) -> Result<Doc, String> {
             };
             (single(path, code), name.clone(), lines)
         }
-        FileKind::Image => unreachable!(),
+        FileKind::Image => return Err(format!("{name} is an image.")),
     };
     Ok(Doc {
-        images: load_images(&ir, path),
+        images: HashMap::new(),
         path: path.to_path_buf(),
         kind,
         ir,
         title,
         words,
+        source,
+        saved: String::new(),
     })
 }
 
@@ -1066,6 +1490,112 @@ mod tests {
         assert_eq!(app.tabs.len(), 1);
         app.close_tab(0);
         assert!(app.doc.is_none() && app.tabs.len() == 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn edits_render_live_save_and_refuse_to_overwrite_outside_changes() {
+        let dir = temp("edit");
+        let file = dir.join("note.md");
+        std::fs::write(&file, "# Note\n").unwrap();
+        let mut app = App::new(Settings::default(), None);
+        app.open(file.clone());
+        app.toggle_edit();
+        assert_eq!(app.mode, Mode::Split);
+        assert!(app.editing());
+        app.edit("# Note\n\n## Added\n".into());
+        let doc = app.doc.as_ref().unwrap();
+        assert!(doc.dirty());
+        assert_eq!(doc.ir.outline.len(), 2, "the preview follows the source");
+        assert!(app.tab_dirty(0));
+        assert!(app.save());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Note\n\n## Added\n");
+        assert!(!app.doc.as_ref().unwrap().dirty());
+        // Someone else edits the file; our next save must not clobber it.
+        std::fs::write(&file, "# Theirs\n").unwrap();
+        app.edit("# Mine\n".into());
+        assert!(!app.save());
+        assert!(app.save_error.as_deref().unwrap().contains("changed on disk"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Theirs\n");
+        app.overwrite();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Mine\n");
+        // Leaving a document saves it.
+        app.edit("# Mine, again\n".into());
+        app.new_tab();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Mine, again\n");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    fn caret(at: usize) -> TextSelection {
+        TextSelection {
+            start: at,
+            end: at,
+            caret_at: at,
+            caret: [100., 200., 1., 20.],
+            bounds: [0., 0., 800., 900.],
+        }
+    }
+
+    #[test]
+    fn slash_menu_lists_and_formatting_edit_the_source() {
+        let dir = temp("compose");
+        let file = dir.join("c.md");
+        std::fs::write(&file, "Intro\n").unwrap();
+        let mut app = App::new(Settings::default(), None);
+        app.open(file);
+        app.set_mode(Mode::Split);
+        // Typing "/" at the start of a line opens the menu under the caret.
+        app.edit("Intro\n/".into());
+        app.selection_changed(caret(7));
+        let slash = app.slash.clone().expect("menu open");
+        assert_eq!((slash.start, slash.at), (6, [100., 226.]));
+        assert_eq!(app.editor_keys(), [EditKey::Up, EditKey::Down, EditKey::Enter]);
+        // Narrow to "task", choose it with Enter.
+        app.edit("Intro\n/task".into());
+        app.selection_changed(caret(11));
+        app.editor_key(EditKey::Down);
+        app.editor_key(EditKey::Up);
+        app.editor_key(EditKey::Enter);
+        assert_eq!(app.doc.as_ref().unwrap().source, "Intro\n- [ ] ");
+        assert!(app.slash.is_none());
+        assert_eq!((app.select.0, app.select.1), (12, 12));
+        // Enter at the end of an item continues the list; on an empty item it ends it.
+        app.edit("Intro\n- [ ] milk".into());
+        app.selection_changed(caret(16));
+        assert_eq!(app.editor_keys(), [EditKey::Enter]);
+        app.editor_key(EditKey::Enter);
+        assert_eq!(app.doc.as_ref().unwrap().source, "Intro\n- [ ] milk\n- [ ] ");
+        app.selection_changed(caret(23));
+        app.editor_key(EditKey::Enter);
+        assert_eq!(app.doc.as_ref().unwrap().source, "Intro\n- [ ] milk\n");
+        // Escape keeps the typed text and the menu closed until the line changes.
+        app.edit("Intro\n/h".into());
+        app.selection_changed(caret(8));
+        assert!(app.slash.is_some());
+        app.cancel_slash();
+        app.selection_changed(TextSelection {
+            caret: [0.; 4],
+            ..caret(8)
+        });
+        assert!(app.slash.is_none());
+        // Bold wraps the selection and toggles back.
+        app.edit("make this bold".into());
+        app.selection_changed(TextSelection {
+            start: 10,
+            end: 14,
+            caret_at: 14,
+            ..caret(14)
+        });
+        app.wrap_selection("**", "**");
+        assert_eq!(app.doc.as_ref().unwrap().source, "make this **bold**");
+        app.selection_changed(TextSelection {
+            start: 10,
+            end: 18,
+            caret_at: 18,
+            ..caret(18)
+        });
+        app.wrap_selection("**", "**");
+        assert_eq!(app.doc.as_ref().unwrap().source, "make this bold");
         std::fs::remove_dir_all(dir).ok();
     }
 

@@ -6,6 +6,7 @@
 //! ```
 
 mod app;
+mod compose;
 mod find;
 mod highlight;
 mod render;
@@ -19,13 +20,14 @@ use volt_ui_kit::{
     ThemeMode, UiTheme,
     declarative::{Bindings, Handlers, Runtime},
     native::{
-        Application, Command, CommandRegistry, RasterPainter, Shortcut, WindowBackground,
+        Application, CloseDecision, Command, CommandRegistry, RasterPainter, Shortcut,
         WindowChrome,
         system::{DesktopCommand, DesktopConfig, DesktopMenu},
     },
 };
 
 pub use app::App;
+use app::Mode;
 use settings::{Appearance, Settings, SidebarTab};
 
 pub const MARKDOWN: [&str; 5] = ["md", "markdown", "mdown", "mkd", "txt"];
@@ -94,6 +96,59 @@ fn commands() -> CommandRegistry<App> {
             })
             .shortcut(primary('[').shift(true))
             .enabled_when(|app: &App| app.tabs.len() > 1),
+        )
+        .command(
+            Command::new("save", "Save", |app: &mut App| {
+                app.save();
+            })
+            .shortcut(primary('s'))
+            .enabled_when(|app: &App| app.doc.as_ref().is_some_and(|d| d.dirty())),
+        )
+        .command(
+            Command::new("bold", "Bold", |app: &mut App| app.wrap_selection("**", "**"))
+                .shortcut(primary('b'))
+                .enabled_when(App::editing),
+        )
+        .command(
+            Command::new("italic", "Italic", |app: &mut App| app.wrap_selection("_", "_"))
+                .shortcut(primary('i'))
+                .enabled_when(App::editing),
+        )
+        .command(
+            Command::new("inline-code", "Code", |app: &mut App| app.wrap_selection("`", "`"))
+                .shortcut(primary('e').shift(true))
+                .enabled_when(App::editing),
+        )
+        .command(
+            Command::new("link", "Link", App::insert_link)
+                .shortcut(primary('k'))
+                .enabled_when(App::editing),
+        )
+        .command(
+            Command::new("toggle-edit", "Edit", App::toggle_edit)
+                .shortcut(primary('e'))
+                .enabled_when(|app: &App| app.doc.as_ref().is_some_and(|d| d.editable())),
+        )
+        .command(
+            Command::new("toggle-source", "Toggle Source", App::toggle_edit)
+                .shortcut(primary('/'))
+                .enabled_when(|app: &App| app.doc.as_ref().is_some_and(|d| d.editable())),
+        )
+        .command(
+            Command::new("mode-preview", "Preview", |app: &mut App| app.set_mode(Mode::Preview))
+                .enabled_when(has_doc),
+        )
+        .command(
+            Command::new("mode-split", "Edit with Preview", |app: &mut App| {
+                app.set_mode(Mode::Split)
+            })
+            .enabled_when(|app: &App| app.doc.as_ref().is_some_and(|d| d.editable())),
+        )
+        .command(
+            Command::new("mode-source", "Edit Source", |app: &mut App| {
+                app.set_mode(Mode::Source)
+            })
+            .enabled_when(|app: &App| app.doc.as_ref().is_some_and(|d| d.editable())),
         )
         .command(
             Command::new("reload", "Reload", App::reload)
@@ -185,6 +240,7 @@ fn menus() -> DesktopConfig {
                 item("open-folder", "Open Folder…"),
                 item("add-folder", "Add Folder to Workspace…"),
                 sep(),
+                item("save", "Save"),
                 item("reload", "Reload"),
                 sep(),
                 item("close-tab", "Close Tab"),
@@ -193,6 +249,11 @@ fn menus() -> DesktopConfig {
         .menu(DesktopMenu::new(
             "Edit",
             [
+                item("bold", "Bold"),
+                item("italic", "Italic"),
+                item("inline-code", "Code"),
+                item("link", "Link"),
+                sep(),
                 item("find", "Find…"),
                 item("find-next", "Find Next"),
                 item("find-previous", "Find Previous"),
@@ -201,6 +262,11 @@ fn menus() -> DesktopConfig {
         .menu(DesktopMenu::new(
             "View",
             [
+                item("mode-preview", "Preview"),
+                item("mode-split", "Edit with Preview"),
+                item("mode-source", "Edit Source"),
+                item("toggle-edit", "Edit"),
+                sep(),
                 item("sidebar", "Toggle Sidebar"),
                 item("files", "Show Files"),
                 item("outline", "Show Outline"),
@@ -237,6 +303,9 @@ struct Args {
     find: Option<String>,
     settings: bool,
     tab: Option<SidebarTab>,
+    mode: Option<Mode>,
+    /// Snapshot only: type `/` on a new last line to show the insert menu.
+    slash: bool,
 }
 
 fn args() -> Result<Args, String> {
@@ -250,6 +319,8 @@ fn args() -> Result<Args, String> {
         find: None,
         settings: false,
         tab: None,
+        mode: None,
+        slash: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -285,6 +356,15 @@ fn args() -> Result<Args, String> {
             }
             "--find" => a.find = Some(it.next().ok_or("--find takes a query")?),
             "--settings" => a.settings = true,
+            "--slash" => a.slash = true,
+            "--mode" => {
+                a.mode = Some(match it.next().as_deref() {
+                    Some("preview") => Mode::Preview,
+                    Some("split") => Mode::Split,
+                    Some("source") => Mode::Source,
+                    _ => return Err("--mode takes preview, split or source".into()),
+                })
+            }
             "--tab" => {
                 a.tab = Some(match it.next().as_deref() {
                     Some("files") => SidebarTab::Files,
@@ -318,10 +398,13 @@ fn settle(
         runtime
             .layout(viewport, &Bindings::default(), metrics)
             .map_err(|e| e.to_string())?;
-        if !runtime
+        let windows = runtime
             .dispatch_virtual_windows(handlers, app)
-            .map_err(|e| e.to_string())?
-        {
+            .map_err(|e| e.to_string())?;
+        let selections = runtime
+            .dispatch_editor_selections(handlers, app)
+            .map_err(|e| e.to_string())?;
+        if !windows && !selections {
             break;
         }
         let (doc, next) = view::view(app).build().map_err(|e| e.to_string())?.into_parts();
@@ -390,15 +473,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(tab) = args.tab {
             app.show_sidebar(tab);
         }
+        if let Some(mode) = args.mode {
+            app.set_mode(mode);
+        }
+        if args.slash {
+            app.set_mode(Mode::Split);
+            let text = app.doc.as_ref().map(|d| format!("{}\n/", d.source.trim_end()));
+            if let Some(text) = text {
+                let end = text.len();
+                app.edit(text);
+                app.select = (end, end, 1);
+            }
+        }
         return Ok(snapshot(&mut app, path, args.size, args.scale, args.scroll)?);
     }
     Application::new("MD Star", app, view::view)
         .size(1180, 820)
         .chrome(WindowChrome::Overlay)
-        .background(WindowBackground::Blur { opacity: 0.6 })
+        .background_from_state(|app: &App| app.settings.window_background())
         .theme_with(theme)
         .commands(commands())
         .desktop(menus(), |_: &mut App, _| {})
+        .messages(|app: &mut App, sender| app.sender = Some(sender), App::message)
+        // Edits are saved as you go; save what remains before closing.
+        .on_close_request(|app: &mut App, _| {
+            app.save_all();
+            app.save_settings_now();
+            CloseDecision::Close
+        })
         .run()
 }
 
@@ -544,11 +646,12 @@ mod tests {
             assert!(app.error.is_none(), "{}: {:?}", file.display(), app.error);
             app.open_find();
             app.set_query("the".into());
-            for (tab, sidebar, settings, typeface) in [
-                (SidebarTab::Files, true, false, "System"),
-                (SidebarTab::Outline, true, true, "New York"),
-                (SidebarTab::Files, false, false, "Monospaced"),
+            for (tab, sidebar, settings, typeface, mode) in [
+                (SidebarTab::Files, true, false, "System", Mode::Preview),
+                (SidebarTab::Outline, true, true, "New York", Mode::Split),
+                (SidebarTab::Files, false, false, "Monospaced", Mode::Source),
             ] {
+                app.mode = mode;
                 app.settings.sidebar_tab = tab;
                 app.settings.sidebar = sidebar;
                 app.settings.typeface = typeface.into();

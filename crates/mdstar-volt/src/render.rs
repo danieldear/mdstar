@@ -219,6 +219,15 @@ fn code_source(block: &BlockIr) -> &str {
     }
 }
 
+/// The byte range of the source a unit renders, when the parser gave one.
+pub fn source_range(unit: &Unit) -> Option<Range<usize>> {
+    let range = match unit {
+        Unit::Block(b) | Unit::Table { table: b, .. } | Unit::Code { block: b, .. } => b.range.as_ref(),
+        Unit::Item { list, index } => list.items[*index].range.as_ref(),
+    }?;
+    Some(range.start.byte_offset..range.end.byte_offset)
+}
+
 /// Vertical space above unit `i`.
 pub fn space_above(units: &[Unit], i: usize, t: &Typography) -> f32 {
     if i == 0 {

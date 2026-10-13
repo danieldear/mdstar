@@ -259,6 +259,9 @@ pub const SIZES: [f32; 12] = [12., 13., 14., 15., 16., 17., 18., 20., 22., 24., 
 pub const DEFAULT_SIZE: f32 = 16.;
 pub const LINE_HEIGHTS: std::ops::RangeInclusive<f32> = 1.3..=2.1;
 pub const WIDTHS: std::ops::RangeInclusive<f32> = 520.0..=1000.0;
+pub const SIDEBAR_WIDTHS: std::ops::RangeInclusive<f32> = 200.0..=420.0;
+/// The lowest window background opacity: text stays readable above it.
+pub const MIN_OPACITY: f32 = 0.3;
 
 /// Which list the sidebar shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,6 +288,11 @@ pub struct Settings {
     pub width: f32,
     pub sidebar: bool,
     pub sidebar_tab: SidebarTab,
+    pub sidebar_width: f32,
+    /// Window background opacity, 1 for a solid window.
+    pub opacity: f32,
+    /// Blur what is behind a translucent window.
+    pub blur: bool,
     /// Workspace folders shown in the file tree.
     pub folders: Vec<PathBuf>,
     /// Folders expanded in the file tree.
@@ -306,6 +314,9 @@ impl Default for Settings {
             width: 700.,
             sidebar: true,
             sidebar_tab: SidebarTab::Files,
+            sidebar_width: 264.,
+            opacity: 1.,
+            blur: true,
             folders: Vec::new(),
             expanded: Vec::new(),
             recent: Vec::new(),
@@ -326,6 +337,27 @@ impl Settings {
         } else {
             self.light_theme
         }
+    }
+
+    /// The window background for these settings.
+    pub fn window_background(&self) -> volt_ui_kit::native::WindowBackground {
+        use volt_ui_kit::native::WindowBackground;
+        if self.opacity >= 0.999 {
+            WindowBackground::Opaque
+        } else if self.blur {
+            WindowBackground::Blur {
+                opacity: self.opacity,
+            }
+        } else {
+            WindowBackground::Transparent {
+                opacity: self.opacity,
+            }
+        }
+    }
+
+    /// Whether the window lets the desktop show through.
+    pub fn translucent(&self) -> bool {
+        self.opacity < 0.999
     }
 
     /// The font family list for body text.
@@ -368,6 +400,16 @@ impl Settings {
             self.width = defaults.width;
         }
         self.width = self.width.clamp(*WIDTHS.start(), *WIDTHS.end());
+        if !self.sidebar_width.is_finite() {
+            self.sidebar_width = defaults.sidebar_width;
+        }
+        self.sidebar_width = self
+            .sidebar_width
+            .clamp(*SIDEBAR_WIDTHS.start(), *SIDEBAR_WIDTHS.end());
+        if !self.opacity.is_finite() {
+            self.opacity = defaults.opacity;
+        }
+        self.opacity = self.opacity.clamp(MIN_OPACITY, 1.);
         if self.light_theme.dark() {
             self.light_theme = defaults.light_theme;
         }

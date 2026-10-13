@@ -7,7 +7,7 @@ use volt_ui_kit::{ColorToken as Role, ui::prelude::*};
 
 use crate::{
     MARKDOWN,
-    app::{App, Doc, MenuTarget, file_action, file_name, heading_action, heading_rows, tab_action},
+    app::{App, Doc, MenuTarget, Mode, file_action, file_name, heading_action, heading_rows, tab_action},
     find,
     render::{self, Highlight, Typography},
     settings::{self, Appearance, CODE_FONTS, SidebarTab, TYPEFACES, Theme},
@@ -15,15 +15,16 @@ use crate::{
 };
 
 pub const TOOLBAR: f32 = 52.;
-pub const SIDEBAR: f32 = 264.;
 /// Leading space for the macOS traffic lights.
 const TRAFFIC_LIGHTS: f32 = 78.;
 const ROW: f32 = 28.;
 
 pub fn view(app: &App) -> Element<App> {
+    let clear = "#00000000".to_string();
     let main = vstack![
         toolbar(app),
         tab_bar(app),
+        save_banner(app),
         zstack![body(app), find_panel(app)]
             .key("stage")
             .align(Align::Stretch)
@@ -31,18 +32,34 @@ pub fn view(app: &App) -> Element<App> {
     ]
     .key("main")
     .flex(1.)
-    .background(Role::Base100)
+    // A translucent window shows its own page-coloured clear through here.
+    .background(if app.settings.translucent() {
+        clear.clone()
+    } else {
+        Role::Base100.into()
+    })
     .align(Align::Stretch);
     let content: Element<App> = if app.settings.sidebar {
-        hstack![sidebar(app), main]
+        // Dragging the divider resizes the sidebar; it keeps that width as
+        // the window resizes.
+        split(sidebar(app), main)
             .key("panes")
+            .first_size(app.settings.sidebar_width)
+            .min_first(*settings::SIDEBAR_WIDTHS.start())
+            .max_first(*settings::SIDEBAR_WIDTHS.end())
+            .min_second(420.)
+            .handle_size(8.)
+            .handle_color(clear)
+            .handle_style(SplitHandle::Reveal)
+            .on_resize(App::resize_sidebar)
+            .fill_width()
+            .fill_height()
             .flex(1.)
-            .align(Align::Stretch)
             .into()
     } else {
         main.into()
     };
-    vstack![content, settings_dialog(app)]
+    zstack![content, slash_menu(app), settings_dialog(app)]
         .key("root")
         .align(Align::Stretch)
         .color(Role::BaseContent)
@@ -192,6 +209,7 @@ fn toolbar(app: &App) -> Element<App> {
                 ),
                 FileKind::Image => format!("{}  ·  Image", folder(app, doc)),
             };
+            let meta = if doc.dirty() { format!("{meta}  ·  Edited") } else { meta };
             (doc.title.clone(), meta)
         }
         None => match &app.error {
@@ -212,6 +230,12 @@ fn toolbar(app: &App) -> Element<App> {
         .flex(1.)
         .into(),
     );
+    items.push(mode_switch(app));
+    items.push(spacer().width(8.).flex(0.).into());
+    let dirty = app.doc.as_ref().is_some_and(Doc::dirty);
+    items.push(icon_button("save", Icon::Download, "Save  ⌘S", dirty, false, |app: &mut App| {
+        app.save();
+    }));
     items.push(icon_button(
         "new",
         Icon::Plus,
@@ -385,6 +409,7 @@ fn tab_bar(app: &App) -> Element<App> {
         .enumerate()
         .map(|(i, tab)| {
             let title = if tab.title.is_empty() { "New Tab".to_string() } else { tab.title.clone() };
+            let title = if app.tab_dirty(i) { format!("• {title}") } else { title };
             tab_button(i, &title, i == app.active, open.filter(|(t, _)| *t == i).map(|(_, at)| at))
         })
         .collect();
@@ -533,8 +558,6 @@ fn sidebar(app: &App) -> Element<App> {
         list,
     ]
     .key("sidebar")
-    .width(SIDEBAR)
-    .flex(0.)
     .align(Align::Stretch)
     .background(sidebar_color)
     .border_sides(Sides::RIGHT)
@@ -894,8 +917,263 @@ fn body(app: &App) -> Element<App> {
     match (&app.doc, &app.error) {
         (_, Some(error)) => message("Couldn’t open the document", error),
         (None, None) => welcome(app),
+        (Some(doc), None) if app.editing() && app.mode == Mode::Source => {
+            // Prose keeps a readable measure; code uses the width.
+            let column = if doc.kind == FileKind::Markdown {
+                vstack![editor(app, doc)]
+                    .width_fraction(1.)
+                    .max_width(app.settings.width + 120.)
+                    .flex(1.)
+                    .align(Align::Stretch)
+            } else {
+                vstack![editor(app, doc)].width_fraction(1.).flex(1.).align(Align::Stretch)
+            };
+            vstack![column]
+                .key("source-pane")
+                .align(Align::Center)
+                .flex(1.)
+                .into()
+        }
+        (Some(doc), None) if app.editing() => split(
+            vstack![editor(app, doc)]
+                .key("editor-pane")
+                .align(Align::Stretch)
+                .border_sides(Sides::RIGHT)
+                .border_color(Role::Border)
+                .border_width(1.),
+            vstack![document(app, doc)].key("preview-pane").align(Align::Stretch),
+        )
+        .key("split")
+        .ratio(app.split)
+        .min_first(280.)
+        .min_second(280.)
+        .handle_size(7.)
+        .handle_color("#00000000")
+        .on_resize(|app: &mut App, ratio| app.split = ratio)
+        .fill_width()
+        .fill_height()
+        .flex(1.)
+        .into(),
         (Some(doc), None) => document(app, doc),
     }
+}
+
+/// The source editor: the document's text in the code font.
+fn editor(app: &App, doc: &Doc) -> Element<App> {
+    let size = (app.settings.font_size * 0.875).round().max(11.);
+    vstack![
+        text_area(&doc.source)
+            .key(format!("source-{}", path_key(&doc.path)))
+            .placeholder("Start writing…")
+            .soft_wrap(true)
+            .tab_indents(true)
+            .on_change(App::edit)
+            .on_selection(App::selection_changed)
+            .on_keys(app.editor_keys(), App::editor_key)
+            .on_cancel(App::cancel_slash)
+            .select(app.select.0..app.select.1, app.select.2)
+            .font_family(app.settings.code_family())
+            .font_size(size)
+            .line_height(1.65)
+            .background(Role::Base100)
+            .border_width(0.)
+            .rounded(0.)
+            .fill_width()
+            .fill_height()
+            .flex(1.),
+    ]
+    .key("editor")
+    .padding(22., Edge::Horizontal)
+    .padding(16., Edge::Top)
+    .align(Align::Stretch)
+    .flex(1.)
+    .into()
+}
+
+/// The `/` menu: Markdown to insert, under the caret.
+fn slash_menu(app: &App) -> Element<App> {
+    let Some(slash) = &app.slash else {
+        return vstack![].key("slash-layer").width(0.).height(0.).into();
+    };
+    let commands = crate::compose::matching(&slash.query);
+    let mut rows: Vec<Element<App>> = vec![vstack![text("INSERT MARKDOWN")
+        .font_size(10.5)
+        .font_weight(600)
+        .letter_spacing(0.06)
+        .color(Role::Muted)]
+    .padding(10., Edge::Horizontal)
+    .padding(4., Edge::Vertical)
+    .into()];
+    for (i, command) in commands.iter().enumerate() {
+        let chosen = i == slash.index;
+        let mut b = button("")
+            .key(format!("slash-{i}"))
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Small)
+            .width_fraction(1.)
+            .height(42.)
+            .rounded(8.)
+            .accessible_label(command.title)
+            .on_click(move |app: &mut App| app.apply_slash(i));
+        if chosen {
+            b = b.background(Role::Primary.alpha(16));
+        }
+        rows.push(
+            zstack![
+                b,
+                hstack![
+                    icon(command.icon)
+                        .size(16.)
+                        .color(if chosen { Role::Primary } else { Role::Muted }),
+                    vstack![
+                        text(command.title).font_size(13.).font_weight(600),
+                        text(command.subtitle).font_size(11.).color(Role::Muted),
+                    ]
+                    .gap(1., Axis::Vertical),
+                ]
+                .key(format!("slash-{i}-label"))
+                .gap(12., Axis::Horizontal)
+                .align(Align::Center)
+                .padding(12., Edge::Left)
+                .scroll_passthrough(true),
+            ]
+            .key(format!("slash-{i}-row"))
+            .align(Align::Stretch)
+            .width_fraction(1.)
+            .height(42.)
+            .into(),
+        );
+    }
+    let menu = vstack(rows)
+        .key("slash-menu")
+        .width(290.)
+        .max_height(crate::compose::MENU_MAX)
+        .scroll(Scroll::Vertical)
+        .gap(1., Axis::Vertical)
+        .padding(6., Edge::All)
+        .background(Role::Base100)
+        .border_color(Role::Border)
+        .border_width(1.)
+        .rounded(12.)
+        .shadow(Shadow::new().color("#0000002E").blur(22.).offset(0., 8.));
+    vstack![menu]
+        .key("slash-layer")
+        .flow(Flow::TopLeft)
+        .padding(slash.at[0].max(0.), Edge::Left)
+        .padding(slash.at[1].max(0.), Edge::Top)
+        .scroll_passthrough(true)
+        .into()
+}
+
+/// Preview, split editor or source only.
+fn mode_switch(app: &App) -> Element<App> {
+    let enabled = app.doc.as_ref().is_some_and(Doc::editable);
+    let current = if enabled { app.mode } else { Mode::Preview };
+    let dark = app.theme().dark();
+    let items: Vec<Element<App>> = [
+        (Mode::Preview, Icon::Eye, "Preview  ⌘E"),
+        (Mode::Split, Icon::Columns, "Edit with Preview  ⌘E"),
+        (Mode::Source, Icon::Edit, "Edit Source"),
+    ]
+    .into_iter()
+    .map(|(mode, glyph, label)| {
+        let chosen = mode == current;
+        let key = format!("mode-{mode:?}").to_lowercase();
+        let mut b = button("")
+            .key(key.clone())
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Small)
+            .width(32.)
+            .height(24.)
+            .rounded(6.)
+            .enabled(enabled)
+            .accessible_label(label)
+            .on_click(move |app: &mut App| app.set_mode(mode));
+        if chosen {
+            b = b
+                .background(if dark { Role::Base300 } else { Role::Base100 })
+                .border_color(Role::BaseContent.alpha(12))
+                .border_width(0.5);
+        }
+        tooltip(
+            label,
+            zstack![
+                b,
+                icon(glyph).size(15.).color(if !enabled {
+                    Role::Border
+                } else if chosen {
+                    Role::BaseContent
+                } else {
+                    Role::Muted
+                }),
+            ]
+            .width(32.)
+            .height(24.),
+        )
+        .key(format!("{key}-tip"))
+        .into()
+    })
+    .collect();
+    hstack(items)
+        .key("mode")
+        .gap(2., Axis::Horizontal)
+        .padding(2., Edge::All)
+        .height(28.)
+        .background(Role::BaseContent.alpha(7))
+        .rounded(8.)
+        .align(Align::Center)
+        .into()
+}
+
+/// Shown when a save failed, for example because the file changed on disk.
+fn save_banner(app: &App) -> Element<App> {
+    let Some(error) = &app.save_error else {
+        return vstack![].key("save-banner").height(0.).into();
+    };
+    let conflict = error.contains("changed on disk");
+    let mut items: Vec<Element<App>> = vec![
+        icon(Icon::Warning).size(15.).color(Role::Warning).into(),
+        text(error.clone()).font_size(12.5).flex(1.).max_lines(2).into(),
+    ];
+    if conflict {
+        items.push(
+            button("Keep My Version")
+                .key("save-overwrite")
+                .size(ControlSize::Small)
+                .font_size(12.)
+                .on_click(App::overwrite)
+                .into(),
+        );
+        items.push(
+            button("Use Version on Disk")
+                .key("save-discard")
+                .size(ControlSize::Small)
+                .font_size(12.)
+                .on_click(App::discard_edits)
+                .into(),
+        );
+    } else {
+        items.push(
+            button("Dismiss")
+                .key("save-dismiss")
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Small)
+                .font_size(12.)
+                .on_click(|app: &mut App| app.save_error = None)
+                .into(),
+        );
+    }
+    hstack(items)
+        .key("save-banner")
+        .gap(10., Axis::Horizontal)
+        .align(Align::Center)
+        .padding(16., Edge::Horizontal)
+        .padding(8., Edge::Vertical)
+        .background(Role::Warning.alpha(14))
+        .border_sides(Sides::BOTTOM)
+        .border_color(Role::Border)
+        .border_width(1.)
+        .into()
 }
 
 pub fn typography(app: &App) -> Typography {
@@ -1202,6 +1480,8 @@ fn settings_dialog(app: &App) -> Element<App> {
         field("Appearance", appearance.into()),
         field("Light theme", swatches(&Theme::LIGHT, s.light_theme)),
         field("Dark theme", swatches(&Theme::DARK, s.dark_theme)),
+        field("Background", opacity_control(app)),
+        field("Blur", blur_control(app)),
         divider().background(Role::Border),
         section("Text"),
         field("Typeface", typeface.into()),
@@ -1237,6 +1517,48 @@ fn settings_dialog(app: &App) -> Element<App> {
         .rounded(14.)
         .background(Role::Base100)
         .into()
+}
+
+/// Window background opacity: below solid, the desktop shows through.
+fn opacity_control(app: &App) -> Element<App> {
+    let s = &app.settings;
+    let percent = (s.opacity * 100.).round() as i32;
+    hstack![
+        slider(s.opacity)
+            .key("set-opacity")
+            .accessible_label("Background opacity")
+            .range(settings::MIN_OPACITY..=1.)
+            .step(0.01)
+            .on_change(|app: &mut App, v| app.configure(|s| s.opacity = (v * 100.).round() / 100.))
+            .width(200.),
+        text(if percent >= 100 {
+            "Solid".to_string()
+        } else {
+            format!("{percent}%")
+        })
+        .font_size(12.)
+        .color(Role::Muted),
+    ]
+    .gap(10., Axis::Horizontal)
+    .align(Align::Center)
+    .into()
+}
+
+fn blur_control(app: &App) -> Element<App> {
+    let s = &app.settings;
+    toggle(
+        if s.translucent() {
+            "Blur what’s behind the window"
+        } else {
+            "Blur applies below a solid background"
+        },
+        s.blur,
+    )
+    .key("set-blur")
+    .enabled(s.translucent())
+    .font_size(12.5)
+    .on_change(|app: &mut App, v| app.configure(|s| s.blur = v))
+    .into()
 }
 
 /// Theme cards: each shows the theme's page and text colours.
