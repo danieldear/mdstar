@@ -191,3 +191,199 @@ mod tests {
         assert_eq!(&COMMANDS[13].insert[11..19], "Untitled");
     }
 }
+
+/// Colours for the source editor's Markdown, as palette indices.
+pub mod tint {
+    pub const HEADING: u8 = 0;
+    pub const SYNTAX: u8 = 1;
+    pub const CODE: u8 = 2;
+    pub const LINK: u8 = 3;
+    pub const COMMENT: u8 = 4;
+    pub const MARKER: u8 = 5;
+}
+
+/// The editor palette for those colours.
+pub fn source_palette(dark: bool) -> Vec<String> {
+    use crate::highlight::{Token, color};
+    vec![
+        "@base-content".into(),
+        "@muted".into(),
+        color(Token::String, dark).into(),
+        "@primary".into(),
+        color(Token::Comment, dark).into(),
+        "@primary".into(),
+    ]
+}
+
+/// Colour ranges for Markdown source: heading lines, syntax markers, code,
+/// link targets and comments. Ordered and non-overlapping.
+pub fn source_tints(text: &str) -> Vec<(usize, usize, u8)> {
+    let mut out: Vec<(usize, usize, u8)> = Vec::new();
+    let push = |out: &mut Vec<(usize, usize, u8)>, start: usize, end: usize, tint: u8| {
+        if start < end && out.last().is_none_or(|l| l.1 <= start) {
+            out.push((start, end, tint));
+        }
+    };
+    let mut fence: Option<&str> = None;
+    let mut front_matter = text.starts_with("---\n");
+    let mut at = 0;
+    for (n, raw) in text.split_inclusive('\n').enumerate() {
+        let line = raw.trim_end_matches(['\n', '\r']);
+        let start = at;
+        let end = at + line.len();
+        at += raw.len();
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        if front_matter {
+            push(&mut out, start, end, tint::COMMENT);
+            if n > 0 && line == "---" {
+                front_matter = false;
+            }
+            continue;
+        }
+        if let Some(open) = fence {
+            if trimmed.starts_with(open) {
+                push(&mut out, start, end, tint::SYNTAX);
+                fence = None;
+            } else {
+                push(&mut out, start, end, tint::CODE);
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fence = Some(&trimmed[..3]);
+            push(&mut out, start, end, tint::SYNTAX);
+            continue;
+        }
+        let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+        if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
+            push(&mut out, start + indent, start + indent + hashes, tint::SYNTAX);
+            push(&mut out, start + indent + hashes, end, tint::HEADING);
+            continue;
+        }
+        if !trimmed.is_empty() && ["---", "***", "___"].iter().any(|r| trimmed.chars().all(|c| c == r.chars().next().unwrap() || c == ' ') && trimmed.len() >= 3 && trimmed.starts_with(&r[..1])) {
+            push(&mut out, start, end, tint::SYNTAX);
+            continue;
+        }
+        // Block markers: quotes, list bullets, numbers and task boxes.
+        let mut body = start + indent;
+        let rest = trimmed;
+        let marker = if rest.starts_with("> ") || rest == ">" {
+            1
+        } else if ["- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] "].iter().any(|m| rest.starts_with(m)) {
+            6
+        } else if ["- ", "* ", "+ "].iter().any(|m| rest.starts_with(m)) {
+            2
+        } else {
+            let digits = rest.chars().take_while(char::is_ascii_digit).count();
+            if digits > 0 && digits < 10 && (rest[digits..].starts_with(". ") || rest[digits..].starts_with(") ")) {
+                digits + 2
+            } else {
+                0
+            }
+        };
+        if marker > 0 {
+            push(&mut out, body, body + marker, tint::MARKER);
+            body += marker;
+        }
+        inline_tints(text, body, end, &mut out);
+    }
+    out
+}
+
+/// Inline code, link targets, emphasis markers, table pipes and comments.
+fn inline_tints(text: &str, start: usize, end: usize, out: &mut Vec<(usize, usize, u8)>) {
+    let line = &text[start..end];
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    let push = |out: &mut Vec<(usize, usize, u8)>, a: usize, b: usize, tint: u8| {
+        if a < b && out.last().is_none_or(|l| l.1 <= start + a) {
+            out.push((start + a, start + b, tint));
+        }
+    };
+    while i < bytes.len() {
+        match bytes[i] {
+            b'`' => {
+                let ticks = bytes[i..].iter().take_while(|b| **b == b'`').count();
+                let close = line[i + ticks..].find(&line[i..i + ticks]).map(|c| i + ticks + c + ticks);
+                let to = close.unwrap_or(i + ticks);
+                push(out, i, to, if close.is_some() { tint::CODE } else { tint::SYNTAX });
+                i = to;
+            }
+            b'<' if line[i..].starts_with("<!--") => {
+                let to = line[i..].find("-->").map_or(line.len(), |c| i + c + 3);
+                push(out, i, to, tint::COMMENT);
+                i = to;
+            }
+            b']' if bytes.get(i + 1) == Some(&b'(') => {
+                let to = line[i..].find(')').map_or(line.len(), |c| i + c + 1);
+                push(out, i, i + 2, tint::SYNTAX);
+                push(out, i + 2, to.saturating_sub(1).max(i + 2), tint::LINK);
+                if to > i + 2 {
+                    push(out, to - 1, to, tint::SYNTAX);
+                }
+                i = to;
+            }
+            b'[' | b'|' => {
+                push(out, i, i + 1, tint::SYNTAX);
+                i += 1;
+            }
+            b'*' | b'_' | b'~' => {
+                let run = bytes[i..].iter().take_while(|b| **b == bytes[i]).count();
+                // Markers next to a word, not a lone `_` inside one.
+                let before = i.checked_sub(1).and_then(|p| bytes.get(p));
+                let inside = bytes[i] == b'_'
+                    && before.is_some_and(u8::is_ascii_alphanumeric)
+                    && bytes.get(i + run).is_some_and(u8::is_ascii_alphanumeric);
+                if !inside && (bytes[i] != b'~' || run >= 2) {
+                    push(out, i, i + run, tint::SYNTAX);
+                }
+                i += run;
+            }
+            _ => i += line[i..].chars().next().map_or(1, char::len_utf8),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tint_tests {
+    use super::*;
+
+    fn named(text: &str) -> Vec<(&str, u8)> {
+        source_tints(text).into_iter().map(|(a, b, t)| (&text[a..b], t)).collect()
+    }
+
+    #[test]
+    fn source_tints_mark_markdown_structure() {
+        assert_eq!(
+            named("# Title\n- [ ] a `b` [c](d) **e** snake_case\n"),
+            [
+                ("#", tint::SYNTAX),
+                (" Title", tint::HEADING),
+                ("- [ ] ", tint::MARKER),
+                ("`b`", tint::CODE),
+                ("[", tint::SYNTAX),
+                ("](", tint::SYNTAX),
+                ("d", tint::LINK),
+                (")", tint::SYNTAX),
+                ("**", tint::SYNTAX),
+                ("**", tint::SYNTAX),
+            ]
+        );
+        assert_eq!(
+            named("---\ntitle: x\n---\n```rust\nfn a() {}\n```\n> quote\n"),
+            [
+                ("---", tint::COMMENT),
+                ("title: x", tint::COMMENT),
+                ("---", tint::COMMENT),
+                ("```rust", tint::SYNTAX),
+                ("fn a() {}", tint::CODE),
+                ("```", tint::SYNTAX),
+                (">", tint::MARKER),
+            ]
+        );
+        // Ranges never overlap and stay in order.
+        let tints = source_tints("**a** `b` <!-- c --> |x|\n");
+        assert!(tints.windows(2).all(|w| w[0].1 <= w[1].0));
+    }
+}

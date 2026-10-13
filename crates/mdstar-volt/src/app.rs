@@ -62,6 +62,14 @@ pub enum Msg {
     Open(Vec<PathBuf>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pane {
+    Editor,
+    Preview,
+}
+/// How long a synced scroll suppresses syncing back.
+const SYNC_ECHO: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// How long typing must pause before an autosave.
 const AUTOSAVE: std::time::Duration = std::time::Duration::from_millis(1200);
 
@@ -175,6 +183,12 @@ pub struct App {
     pub slash: Option<Slash>,
     /// A `/` the reader dismissed with Escape, so it stays closed.
     slash_dismissed: Option<usize>,
+
+    /// Which pane led the last scroll sync, and when: the other pane's echo
+    /// of that scroll is not synced back.
+    sync: Option<(Pane, std::time::Instant)>,
+    /// Scroll the editor to this byte when the request number changes.
+    pub editor_scroll: (usize, u32),
 
     /// Watches workspace folders and open files for outside changes.
     watcher: Option<notify::RecommendedWatcher>,
@@ -650,9 +664,14 @@ impl App {
     /// and in a split view keep the edited block in the preview.
     pub fn selection_changed(&mut self, s: TextSelection) {
         let moved = self.selection.is_none_or(|old| old.caret_at != s.caret_at);
+        let scrolled = self.selection.is_some_and(|old| old.top != s.top);
         self.selection = Some(s);
-        if moved && self.mode == Mode::Split {
-            self.follow_caret(s.caret_at);
+        if self.mode == Mode::Split && !self.echo(Pane::Editor) {
+            if scrolled {
+                self.sync_preview_to(s.top);
+            } else if moved {
+                self.follow_caret(s.caret_at);
+            }
         }
         let found = self
             .doc
@@ -688,6 +707,42 @@ impl App {
         }
     }
 
+    /// Whether `pane` is moving only because the other pane just synced it.
+    fn echo(&self, pane: Pane) -> bool {
+        self.sync
+            .is_some_and(|(leader, at)| leader != pane && at.elapsed() < SYNC_ECHO)
+    }
+
+    /// The editor scrolled: show the block at its top line in the preview.
+    fn sync_preview_to(&mut self, top: usize) {
+        let Some(doc) = &self.doc else { return };
+        let units = doc.units();
+        if let Some(row) = units
+            .iter()
+            .position(|u| render::source_range(u).is_some_and(|r| top < r.end))
+        {
+            self.sync = Some((Pane::Editor, std::time::Instant::now()));
+            self.jump_to(row);
+        }
+    }
+
+    /// The preview scrolled: bring its first block to the editor's top.
+    pub fn preview_scrolled(&mut self) {
+        if self.mode != Mode::Split || self.echo(Pane::Preview) {
+            return;
+        }
+        let Some(doc) = &self.doc else { return };
+        let units = doc.units();
+        let Some(range) = units.get(self.first_visible).and_then(render::source_range) else {
+            return;
+        };
+        if self.selection.is_some_and(|s| s.top == range.start) {
+            return;
+        }
+        self.sync = Some((Pane::Preview, std::time::Instant::now()));
+        self.editor_scroll = (range.start, self.editor_scroll.1.wrapping_add(1));
+    }
+
     /// Scroll the preview to the block the caret is in, if it is off screen.
     fn follow_caret(&mut self, caret: usize) {
         let Some(doc) = &self.doc else { return };
@@ -700,6 +755,7 @@ impl App {
         };
         let visible = self.first_visible..self.window.end.saturating_sub(4).max(self.first_visible + 1);
         if !visible.contains(&row) {
+            self.sync = Some((Pane::Editor, std::time::Instant::now()));
             self.jump_to(row.saturating_sub(1));
         }
     }
@@ -1679,6 +1735,7 @@ mod tests {
             caret_at: at,
             caret: [100., 200., 1., 20.],
             bounds: [0., 0., 800., 900.],
+            top: 0,
         }
     }
 

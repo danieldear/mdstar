@@ -972,6 +972,19 @@ fn editor(app: &App, doc: &Doc) -> Element<App> {
             .on_keys(app.editor_keys(), App::editor_key)
             .on_cancel(App::cancel_slash)
             .select(app.select.0..app.select.1, app.select.2)
+            .scroll_to_offset(app.editor_scroll.0, app.editor_scroll.1)
+            .highlights(
+                if doc.kind == FileKind::Markdown {
+                    crate::compose::source_palette(app.theme().dark())
+                } else {
+                    Vec::new()
+                },
+                if doc.kind == FileKind::Markdown {
+                    crate::compose::source_tints(&doc.source)
+                } else {
+                    Vec::new()
+                },
+            )
             .font_family(app.settings.code_family())
             .font_size(size)
             .line_height(1.65)
@@ -1229,8 +1242,13 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
         .on_window_change(|app: &mut App, window| {
             // Rows above the viewport are overscan; the first visible row
             // follows them (or is row 0 at the top).
-            app.first_visible = if window.start == 0 { 0 } else { window.start + 4 };
+            let first = if window.start == 0 { 0 } else { window.start + 4 };
+            let scrolled = first != app.first_visible;
+            app.first_visible = first;
             app.window = window;
+            if scrolled {
+                app.preview_scrolled();
+            }
         })
         .font_family(family)
         .flex(1.)
