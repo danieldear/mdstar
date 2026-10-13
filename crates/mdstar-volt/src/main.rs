@@ -9,6 +9,7 @@ mod render;
 
 use std::{
     collections::HashMap,
+    ops::Range,
     path::{Path, PathBuf},
 };
 
@@ -42,9 +43,13 @@ pub struct App {
     title: String,
     words: usize,
     outline: bool,
-    /// Outline entry last jumped to, and the scroll request that does it.
-    current: Option<String>,
-    jump: (String, u32),
+    /// Document rows currently built, the first row on screen, and the row
+    /// to jump to with the request number that triggers the jump.
+    window: Range<usize>,
+    first_visible: usize,
+    jump: (usize, u32),
+    /// Bumped per loaded document so row measurements start fresh.
+    generation: u64,
     /// Documents to return to with Back.
     history: Vec<PathBuf>,
     pub copied: Option<String>,
@@ -69,11 +74,14 @@ impl App {
                             .unwrap_or_else(|| file_name(&path));
                         self.words = render::word_count(&doc.blocks);
                         self.outline = doc.outline.len() > 1;
+                        self.window = 0..render::units(&doc.blocks).len().min(30);
                         self.doc = Some(doc);
                         self.error = None;
-                        self.current = None;
                         self.copied = None;
-                        self.jump = (String::new(), self.jump.1.wrapping_add(1));
+                        self.generation = self.generation.wrapping_add(1);
+
+                        self.first_visible = 0;
+                        self.jump = (0, self.jump.1.wrapping_add(1));
                     }
                     Err(e) => {
                         self.error = Some(format!("{} could not be parsed: {e}", file_name(&path)))
@@ -86,11 +94,11 @@ impl App {
     }
     fn reload(&mut self) {
         if let Some(path) = self.path.clone() {
-            let (jump, current) = (self.jump.clone(), self.current.clone());
+            let first = self.first_visible;
             self.open(path);
             // Keep the reader's place when reloading.
-            self.current = current;
-            self.jump.0 = jump.0;
+            self.jump.0 = first;
+            self.first_visible = first;
         }
     }
     fn choose_file(&mut self) {
@@ -114,9 +122,9 @@ impl App {
             self.open(path);
         }
     }
-    fn jump_to(&mut self, id: String) {
-        self.current = Some(id.clone());
-        self.jump = (id, self.jump.1.wrapping_add(1));
+    fn jump_to(&mut self, row: usize) {
+        self.first_visible = row;
+        self.jump = (row, self.jump.1.wrapping_add(1));
     }
     /// Follow a clicked link (see [`link_action`]).
     pub fn follow_link(&mut self, target: String) {
@@ -136,13 +144,12 @@ impl App {
     }
     fn jump_to_anchor(&mut self, anchor: &str) {
         let anchor = anchor.to_ascii_lowercase();
-        let id = self
-            .doc
-            .as_ref()
-            .and_then(|d| d.outline.iter().find(|item| item.anchor == anchor))
-            .map(|item| render::key_of(&item.id));
-        if let Some(id) = id {
-            self.jump_to(id);
+        let row = self.doc.as_ref().and_then(|d| {
+            let id = &d.outline.iter().find(|item| item.anchor == anchor)?.id;
+            heading_rows(&render::units(&d.blocks)).remove(id)
+        });
+        if let Some(row) = row {
+            self.jump_to(row);
         }
     }
     fn dark(&self) -> bool {
@@ -194,6 +201,18 @@ fn link_action(target: &str, current: Option<&Path>) -> LinkAction {
     } else {
         LinkAction::Ignore
     }
+}
+
+/// Heading block id to its document row.
+fn heading_rows(units: &[render::Unit]) -> HashMap<String, usize> {
+    units
+        .iter()
+        .enumerate()
+        .filter_map(|(row, unit)| match unit {
+            render::Unit::Block(b) if b.kind == "heading" => Some((b.id.clone(), row)),
+            _ => None,
+        })
+        .collect()
 }
 
 fn file_name(path: &Path) -> String {
@@ -379,38 +398,46 @@ fn group(n: usize) -> String {
 
 fn outline(app: &App, doc: &DocumentIr) -> Element<App> {
     let top = doc.outline.iter().map(|i| i.level).min().unwrap_or(1);
+    let rows = heading_rows(&render::units(&doc.blocks));
+    // The section being read: the last heading at or above the first row
+    // on screen.
+    let current = doc
+        .outline
+        .iter()
+        .filter_map(|item| rows.get(&item.id).map(|row| (item, *row)))
+        .filter(|(_, row)| *row <= app.first_visible)
+        .max_by_key(|(_, row)| *row)
+        .map(|(item, _)| item.id.clone());
     let items: Vec<Element<App>> = doc
         .outline
         .iter()
         .filter(|item| item.level <= top + 2)
-        .map(|item| {
+        .filter_map(|item| {
+            let row = *rows.get(&item.id)?;
             let id = render::key_of(&item.id);
             let depth = f32::from(item.level - top);
-            let active = app.current.as_deref() == Some(id.as_str());
-            let target = id.clone();
-            button(item.text.clone())
-                .key(format!("outline-{id}"))
-                .variant(ButtonVariant::Ghost)
-                .size(ControlSize::Small)
-                .label_align(Align::Start)
-                .label_inset(10. + 14. * depth)
-                .font_size(if depth == 0. { 13. } else { 12.5 })
-                .font_weight(if active { 600 } else { 400 })
-                .max_lines(1)
-                .color(if active || depth == 0. {
-                    Role::BaseContent
-                } else {
-                    Role::Muted
-                })
-                .background(if active {
-                    Role::BaseContent.alpha(8)
-                } else {
-                    "#00000000".into()
-                })
-                .rounded(7.)
-                .fill_width()
-                .on_click(move |app: &mut App| app.jump_to(target.clone()))
-                .into()
+            let active = current.as_deref() == Some(item.id.as_str());
+            Some(
+                button(item.text.clone())
+                    .key(format!("outline-{id}"))
+                    .variant(ButtonVariant::Ghost)
+                    .size(ControlSize::Small)
+                    .label_align(Align::Start)
+                    .label_inset(10. + 14. * depth)
+                    .font_size(if depth == 0. { 13. } else { 12.5 })
+                    .font_weight(if active { 600 } else { 400 })
+                    .max_lines(1)
+                    .color(if active || depth == 0. { Role::BaseContent } else { Role::Muted })
+                    .background(if active {
+                        Role::BaseContent.alpha(8)
+                    } else {
+                        "#00000000".into()
+                    })
+                    .rounded(7.)
+                    .fill_width()
+                    .on_click(move |app: &mut App| app.jump_to(row))
+                    .into(),
+            )
         })
         .collect();
     vstack![
@@ -505,46 +532,32 @@ fn empty_state(title: &str, detail: &str) -> Element<App> {
 }
 
 fn document(app: &App, doc: &DocumentIr) -> Element<App> {
-    let mut ctx = render::Ctx::new(&app.images, app.copied.as_deref());
-    let mut blocks = render::blocks(&doc.blocks, &mut ctx);
+    let units = render::units(&doc.blocks);
+    let ctx = render::Ctx {
+        images: &app.images,
+        copied: app.copied.as_deref(),
+    };
+    let estimates: Vec<f32> = (0..units.len())
+        .map(|i| render::estimate(&units, i, &app.images))
+        .collect();
     if std::env::var_os("MDSTAR_DEBUG").is_some() {
-        eprintln!(
-            "blocks {}/{} elements~{} truncated {}",
-            blocks.len(),
-            doc.blocks.len(),
-            ctx.elements(),
-            ctx.truncated
-        );
+        eprintln!("units {} window {:?}", units.len(), app.window);
     }
-    if ctx.truncated {
-        blocks.push(
-            text("The rest of this long document is not shown yet.")
-                .key("truncated")
-                .color(Role::Warning)
-                .into(),
-        );
-    }
-    // Margins live inside the scrolled content: a scroll view clips to its
-    // own padding box, which would hide text scrolling under its margins.
-    vstack![
-        vstack![
-            vstack(blocks)
-                .key("page")
-                .gap(16., Axis::Vertical)
-                .max_width(render::MEASURE)
-                .fill_width()
-        ]
-        .key("margins")
-        .align(Align::Center)
-        .padding(56., Edge::Horizontal)
-        .padding(44., Edge::Top)
-        .padding(96., Edge::Bottom)
-    ]
-    .key("document")
-    .flex(1.)
-    .scroll(Scroll::Vertical)
-    .scroll_to(app.jump.0.clone(), app.jump.1)
-    .into()
+    lazy_list(units.len(), |i| render::row(&units, i, &ctx))
+        .key("document")
+        .estimates(estimates)
+        .window(app.window.clone())
+        .overscan(4)
+        .generation(app.generation)
+        .scroll_to_row(app.jump.0, app.jump.1)
+        .on_window_change(|app: &mut App, window| {
+            // Rows above the viewport are overscan; the first visible row
+            // follows them (or is row 0 at the top).
+            app.first_visible = if window.start == 0 { 0 } else { window.start + 4 };
+            app.window = window;
+        })
+        .flex(1.)
+        .into()
 }
 
 /// A neutral reading palette: zinc greys with a blue accent.
@@ -630,6 +643,8 @@ struct Args {
     snapshot: Option<PathBuf>,
     size: [f32; 2],
     scale: f32,
+    /// Snapshot only: scroll the document down this many points first.
+    scroll: f32,
 }
 
 fn args() -> Result<Args, String> {
@@ -639,6 +654,7 @@ fn args() -> Result<Args, String> {
         snapshot: None,
         size: [1100., 800.],
         scale: 2.,
+        scroll: 0.,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -657,6 +673,12 @@ fn args() -> Result<Args, String> {
                     w.parse().map_err(|_| "bad width")?,
                     h.parse().map_err(|_| "bad height")?,
                 ];
+            }
+            "--scroll" => {
+                a.scroll = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or("--scroll takes points")?;
             }
             "--scale" => {
                 a.scale = it
@@ -678,17 +700,63 @@ fn args() -> Result<Args, String> {
 }
 
 /// Render one frame offscreen (GPU when available) to a PNG.
-fn snapshot(app: &App, path: &Path, size: [f32; 2], scale: f32) -> Result<(), String> {
-    let (doc, handlers) = view(app).build().map_err(|e| e.to_string())?.into_parts();
+fn snapshot(
+    app: &mut App,
+    path: &Path,
+    size: [f32; 2],
+    scale: f32,
+    scroll: f32,
+) -> Result<(), String> {
+    let (doc, mut handlers) = view(app).build().map_err(|e| e.to_string())?.into_parts();
     let mut runtime =
         Runtime::new(doc, &handlers, &Bindings::default()).map_err(|e| e.to_string())?;
     let viewport = volt_ui_kit::Viewport::new(size[0] * scale, size[1] * scale, scale)
         .ok_or("invalid snapshot size")?;
     let mut painter = RasterPainter::new(viewport);
-    runtime
-        .layout(viewport, &Bindings::default(), &mut painter)
-        .map_err(|e| e.to_string())?;
+    // As the window does: lay out, then rebuild while the document asks for
+    // a different window of rows.
+    fn settle(
+        runtime: &mut Runtime,
+        handlers: &mut volt_ui_kit::declarative::Handlers<'static, App>,
+        app: &mut App,
+        viewport: volt_ui_kit::Viewport,
+        painter: &mut RasterPainter,
+    ) -> Result<(), String> {
+        for _ in 0..16 {
+            runtime
+                .layout(viewport, &Bindings::default(), painter)
+                .map_err(|e| e.to_string())?;
+            if !runtime
+                .dispatch_virtual_windows(handlers, app)
+                .map_err(|e| e.to_string())?
+            {
+                break;
+            }
+            let (doc, next) = view(app).build().map_err(|e| e.to_string())?.into_parts();
+            runtime
+                .replace_document(doc, &next, &Bindings::default())
+                .map_err(|e| e.to_string())?;
+            *handlers = next;
+        }
+        Ok(())
+    }
+    settle(&mut runtime, &mut handlers, app, viewport, &mut painter)?;
+    // Wheel over the document column in steps, as a trackpad would.
+    let mut left = scroll;
+    while left > 0. {
+        let step = left.min(400.);
+        runtime.scroll_at((size[0] - 300.) * scale, size[1] * 0.5 * scale, [0., step]);
+        settle(&mut runtime, &mut handlers, app, viewport, &mut painter)?;
+        left -= step;
+    }
     runtime.settle_animations();
+    if std::env::var_os("MDSTAR_DEBUG").is_some() {
+        for id in ["document", "margins", "page"] {
+            if let Some(b) = runtime.boxes().iter().find(|b| b.id == id) {
+                eprintln!("{id} bounds {:?}", b.bounds.bounds());
+            }
+        }
+    }
     let ui = theme(
         app,
         if app.dark() {
@@ -725,7 +793,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         app.open(file);
     }
     if let Some(path) = &args.snapshot {
-        return Ok(snapshot(&app, path, args.size, args.scale)?);
+        return Ok(snapshot(&mut app, path, args.size, args.scale, args.scroll)?);
     }
     Application::new("MD Star", app, view)
         .size(1180, 820)
@@ -777,6 +845,58 @@ mod tests {
                 "{unsafe_target}"
             );
         }
+    }
+
+    /// Long documents used to stop part way through once the view hit the
+    /// element budget. Rows are now built on demand, so the last one is
+    /// reachable however long the file is.
+    #[test]
+    fn the_end_of_a_very_long_document_is_reachable() {
+        let mut source = String::new();
+        for i in 0..1500 {
+            source.push_str(&format!(
+                "## Section {i}\n\nParagraph {i} with **bold** and `code`.\n\n- one\n- two\n\n```rust\nfn f{i}() {{}}\n```\n\n"
+            ));
+        }
+        source.push_str("The very last line.\n");
+        let dir = std::env::temp_dir().join(format!("mdstar-long-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("long.md");
+        std::fs::write(&file, source).unwrap();
+        let mut app = App::default();
+        app.open(file);
+        let (rows, last) = {
+            let units = render::units(&app.doc.as_ref().unwrap().blocks);
+            (units.len(), render::unit_key(&units, units.len() - 1))
+        };
+        assert!(rows > 6000, "{rows} rows");
+        app.jump_to(rows - 1);
+        let viewport = volt_ui_kit::Viewport::new(1000., 800., 1.).unwrap();
+        let mut metrics = RasterPainter::new(viewport);
+        let (doc, mut handlers) = view(&app).build().unwrap().into_parts();
+        let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
+        for _ in 0..16 {
+            runtime
+                .layout(viewport, &Bindings::default(), &mut metrics)
+                .unwrap();
+            if !runtime
+                .dispatch_virtual_windows(&mut handlers, &mut app)
+                .unwrap()
+            {
+                break;
+            }
+            let (doc, next) = view(&app).build().unwrap().into_parts();
+            runtime
+                .replace_document(doc, &next, &Bindings::default())
+                .unwrap();
+            handlers = next;
+        }
+        assert_eq!(app.window.end, rows, "window {:?}", app.window);
+        assert!(
+            runtime.boxes().iter().any(|b| b.id == last),
+            "the last row {last} is built"
+        );
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
