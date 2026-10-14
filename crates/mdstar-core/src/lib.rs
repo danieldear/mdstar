@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use thiserror::Error;
 
 pub mod document_ir;
+pub mod latex;
 
 // ─── Inline nodes ────────────────────────────────────────────────────────────
 
