@@ -1,12 +1,10 @@
 [workspace]
 members = [
   "crates/mdstar-core",
-  "crates/mdstar-render-terminal",
   "crates/mdstar-render-html",
-  "crates/mdstar-app",
-  "crates/mdstar-ffi",
 ]
-# Standalone: depends on a local Volt UI Kit checkout until it is published.
+# The app builds on its own: it depends on a local Volt UI Kit checkout
+# until the kit is published.
 exclude = ["crates/mdstar-volt"]
 resolver = "2"
 
@@ -17,20 +15,7 @@ version = "0.1.1"
 authors = ["MD Star Contributors"]
 
 [workspace.dependencies]
-anyhow = "1.0.100"
-clap = { version = "4.5.40", features = ["derive"] }
-markdown = "1.0.0"
-textwrap = "0.16.1"
-thiserror = "2.0.17"
-once_cell = "1.21.3"
-assert_cmd = "2.0.16"
-predicates = "3.1.2"
-shell-words = "1.1.0"
-mdansi = "0.1.0"
-mermaid-text = "0.16.1"
-ratatui = "0.30.0"
-crossterm = "0.29.0"
-ansi-to-tui = "8.0.1"
-ratatui-textarea = "0.9.1"
 emojis = "0.9.0"
 latex2mathml = "0.2.3"
+markdown = "1.0.0"
+thiserror = "2.0.17"

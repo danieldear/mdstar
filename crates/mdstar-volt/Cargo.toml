@@ -20,7 +20,7 @@ path = "src/main.rs"
 [package.metadata.volt.bundle]
 name = "MD Star"
 identifier = "dev.mdstar.volt"
-icon = "../mdstar-app/icons/icon.icns"
+icon = "assets/icon.icns"
 minimum-system-version = "13.0"
 category = "public.app-category.productivity"
 copyright = "MD Star contributors. MIT OR Apache-2.0."
