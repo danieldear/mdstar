@@ -27,7 +27,7 @@ volt-ui-kit = { path = "../../../rust/volt-ui-kit", features = ["native-gpu", "n
 objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSURL", "NSAttributedString", "NSGeometry", "NSObject"] }
 # Native context menus with Look Up, Share, Speech and Services.
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSSharingService", "NSSpeechSynthesizer", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSColor", "NSColorSpace", "NSEvent", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSSharingService", "NSSpeechSynthesizer", "NSView", "NSWindow"] }
 
 [profile.dev.package."*"]
 opt-level = 3

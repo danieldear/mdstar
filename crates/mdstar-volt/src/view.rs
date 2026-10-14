@@ -59,7 +59,7 @@ pub fn view(app: &App) -> Element<App> {
     } else {
         main.into()
     };
-    zstack![content, slash_menu(app), settings_dialog(app)]
+    zstack![content, slash_menu(app), appearance_popover(app), settings_dialog(app)]
         .key("root")
         .align(Align::Stretch)
         .color(Role::BaseContent)
@@ -271,10 +271,10 @@ fn toolbar(app: &App) -> Element<App> {
     items.push(icon_button(
         "settings",
         Icon::Type,
-        "Appearance and Text  ⌘,",
+        "Appearance",
         true,
-        app.show_settings,
-        App::open_settings,
+        app.appearance_open || app.show_settings,
+        |app: &mut App| app.appearance_open = !app.appearance_open,
     ));
     hstack(items)
         .key("toolbar")
@@ -509,7 +509,7 @@ fn sidebar(app: &App) -> Element<App> {
         SidebarTab::Files => files(app),
         SidebarTab::Outline => outline(app),
     };
-    let sidebar_color = app.theme().colors().sidebar;
+    let sidebar_color = app.settings.sidebar_fill(app.theme());
     vstack![
         hstack![
             spacer(),
@@ -1499,8 +1499,10 @@ fn settings_dialog(app: &App) -> Element<App> {
     let content = vstack![
         section("Appearance"),
         field("Appearance", appearance.into()),
-        field("Light theme", swatches(&Theme::LIGHT, s.light_theme)),
-        field("Dark theme", swatches(&Theme::DARK, s.dark_theme)),
+        field("Light theme", swatches("set-light", &Theme::LIGHT, s.light_theme, [116., 54.])),
+        field("Dark theme", swatches("set-dark", &Theme::DARK, s.dark_theme, [116., 54.])),
+        field("Accent", accents(app, "set")),
+        field("Sidebar", glass_control(app, "set-glass")),
         field("Background", opacity_control(app)),
         field("Blur", blur_control(app)),
         divider().background(Role::Border),
@@ -1582,41 +1584,54 @@ fn blur_control(app: &App) -> Element<App> {
     .into()
 }
 
-/// Theme cards: each shows the theme's page and text colours.
-fn swatches(themes: &[Theme], selected: Theme) -> Element<App> {
+/// Theme cards: each shows the theme's page, text and accent. `prefix`
+/// keeps keys apart where the cards appear twice (settings, popover).
+fn swatches(prefix: &str, themes: &[Theme], selected: Theme, size: [f32; 2]) -> Element<App> {
+    let [w, h] = size;
     let cards: Vec<Element<App>> = themes
         .iter()
         .map(|&theme| {
             let c = theme.colors();
             let chosen = theme == selected;
             let light = Theme::LIGHT.contains(&theme);
-            let key = format!("theme-{}", theme.name().to_lowercase());
+            let key = format!("{prefix}-theme-{theme:?}").to_lowercase();
             zstack![
                 button("")
                     .key(format!("{key}-button"))
                     .variant(ButtonVariant::Ghost)
                     .accessible_label(format!("{} theme", theme.name()))
-                    .width(116.)
-                    .height(58.)
+                    .width(w)
+                    .height(h)
                     .on_click(move |app: &mut App| {
                         app.configure(|s| {
                             if light {
                                 s.light_theme = theme;
+                                if s.appearance == Appearance::Dark {
+                                    s.appearance = Appearance::Light;
+                                }
                             } else {
                                 s.dark_theme = theme;
+                                if s.appearance == Appearance::Light {
+                                    s.appearance = Appearance::Dark;
+                                }
                             }
                         })
                     }),
                 vstack![
-                    text("Aa").font_size(17.).font_weight(600).color(c.text),
-                    text(theme.name()).font_size(11.).color(c.muted),
+                    hstack![
+                        text("Aa").font_size(15.).font_weight(700).color(c.text),
+                        spacer(),
+                        vstack![].width(9.).height(9.).rounded(4.5).background(c.accent),
+                    ]
+                    .align(Align::Center),
+                    text(theme.name()).font_size(10.5).color(c.muted).max_lines(1),
                 ]
                 .key(format!("{key}-face"))
-                .gap(1., Axis::Vertical)
-                .padding(10., Edge::Horizontal)
-                .padding(8., Edge::Vertical)
-                .width(116.)
-                .height(58.)
+                .gap(2., Axis::Vertical)
+                .padding(9., Edge::Horizontal)
+                .padding(7., Edge::Vertical)
+                .width(w)
+                .height(h)
                 .background(c.page)
                 .rounded(9.)
                 .border_color(if chosen { Role::Primary.into() } else { c.border.to_string() })
@@ -1624,12 +1639,160 @@ fn swatches(themes: &[Theme], selected: Theme) -> Element<App> {
                 .scroll_passthrough(true),
             ]
             .key(key)
-            .width(116.)
-            .height(58.)
+            .width(w)
+            .height(h)
             .into()
         })
         .collect();
-    hstack(cards).gap(8., Axis::Horizontal).into()
+    hstack(cards)
+        .key(format!("{prefix}-themes"))
+        .wrap(true)
+        .gap(8., Axis::Horizontal)
+        .gap(8., Axis::Vertical)
+        .into()
+}
+
+/// Accent colours as round swatches, like System Settings.
+fn accents(app: &App, prefix: &str) -> Element<App> {
+    use crate::settings::Accent;
+    let dark = app.theme().dark();
+    let dots: Vec<Element<App>> = Accent::ALL
+        .iter()
+        .map(|&accent| {
+            let chosen = app.settings.accent == accent;
+            let color = match accent {
+                Accent::Theme => app.theme().colors().accent.to_string(),
+                #[cfg(target_os = "macos")]
+                Accent::System => crate::macos::system_accent()
+                    .map(|c| format!("#{:02X}{:02X}{:02X}", (c[0] * 255.) as u8, (c[1] * 255.) as u8, (c[2] * 255.) as u8))
+                    .unwrap_or_else(|| "#007AFF".into()),
+                #[cfg(not(target_os = "macos"))]
+                Accent::System => "#007AFF".into(),
+                fixed => fixed.fixed(dark).unwrap_or("#007AFF").to_string(),
+            };
+            let key = format!("{prefix}-accent-{accent:?}").to_lowercase();
+            let mut dot = vstack![if chosen {
+                icon(Icon::Check).size(11.).color(Role::PrimaryContent).into()
+            } else {
+                Element::from(spacer().width(0.).flex(0.))
+            }]
+            .key(format!("{key}-dot"))
+            .width(20.)
+            .height(20.)
+            .rounded(10.)
+            .flow(Flow::Center)
+            .background(color)
+            .scroll_passthrough(true);
+            if chosen {
+                dot = dot.border_color(Role::BaseContent.alpha(40)).border_width(2.);
+            }
+            tooltip(
+                accent.name(),
+                zstack![
+                    button("")
+                        .key(format!("{key}-button"))
+                        .variant(ButtonVariant::Ghost)
+                        .accessible_label(format!("{} accent", accent.name()))
+                        .width(24.)
+                        .height(24.)
+                        .rounded(12.)
+                        .on_click(move |app: &mut App| app.configure(|s| s.accent = accent)),
+                    dot,
+                ]
+                .key(format!("{key}-layer"))
+                .width(24.)
+                .height(24.),
+            )
+            .key(key)
+            .into()
+        })
+        .collect();
+    hstack(dots).key(format!("{prefix}-accents")).gap(4., Axis::Horizontal).wrap(true).into()
+}
+
+fn glass_control(app: &App, key: &str) -> Element<App> {
+    toggle("Translucent sidebar", app.settings.sidebar_glass)
+        .key(key)
+        .font_size(12.5)
+        .on_change(|app: &mut App, v| app.configure(|s| s.sidebar_glass = v))
+        .into()
+}
+
+/// The quick Appearance popover from the toolbar: mode, theme, accent,
+/// size and glass, with a way into the full settings.
+fn appearance_popover(app: &App) -> Element<App> {
+    let s = &app.settings;
+    let theme = app.theme();
+    let (themes, selected): (&[Theme], Theme) = if theme.dark() {
+        (&Theme::DARK, s.dark_theme)
+    } else {
+        (&Theme::LIGHT, s.light_theme)
+    };
+    let label = |t: &str| -> Element<App> {
+        text(t.to_uppercase())
+            .font_size(10.)
+            .font_weight(600)
+            .letter_spacing(0.06)
+            .color(Role::Muted)
+            .into()
+    };
+    let content = vstack![
+        segmented(
+            "pop-appearance",
+            &[
+                (Appearance::System, "Auto"),
+                (Appearance::Light, "Light"),
+                (Appearance::Dark, "Dark"),
+            ],
+            s.appearance,
+            theme.dark(),
+            |app: &mut App, v| app.configure(|s| s.appearance = v),
+        ),
+        label("Theme"),
+        swatches("pop", themes, selected, [88., 50.]),
+        label("Accent"),
+        accents(app, "pop"),
+        hstack![
+            text("Text size").font_size(12.5).flex(1.),
+            icon_button("pop-smaller", Icon::Minus, "Smaller  ⌘−", s.font_size > settings::SIZES[0], false, |app: &mut App| app.zoom(-1)),
+            text(format!("{} pt", s.font_size)).font_size(12.5).text_align(TextAlign::Center).width(46.),
+            icon_button(
+                "pop-bigger",
+                Icon::Plus,
+                "Bigger  ⌘=",
+                s.font_size < settings::SIZES[settings::SIZES.len() - 1],
+                false,
+                |app: &mut App| app.zoom(1),
+            ),
+        ]
+        .align(Align::Center),
+        glass_control(app, "pop-glass"),
+        divider().background(Role::Border),
+        button("More Settings…")
+            .key("pop-more")
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Small)
+            .font_size(12.5)
+            .label_align(Align::Start)
+            .fill_width()
+            .on_click(|app: &mut App| {
+                app.appearance_open = false;
+                app.open_settings();
+            }),
+    ]
+    .key("appearance")
+    .gap(10., Axis::Vertical)
+    .align(Align::Stretch);
+    // Three 88 pt theme cards with their gaps, plus the card's padding.
+    popover(content)
+        .key("appearance-popover")
+        .anchor("settings")
+        .open(app.appearance_open)
+        .on_dismiss(|app: &mut App| app.appearance_open = false)
+        .width(3. * 88. + 2. * 8. + 2. * 16.)
+        .rounded(14.)
+        .background(Role::Base100)
+        .into()
 }
 
 /// A sample of the chosen typography in the current theme.

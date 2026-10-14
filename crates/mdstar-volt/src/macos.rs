@@ -318,3 +318,16 @@ pub fn offer_selection_to_services() {
     let plain: Retained<NSString> = unsafe { NSPasteboardTypeString }.copy();
     app.registerServicesMenuSendTypes_returnTypes(&NSArray::from_retained_slice(&[plain]), &NSArray::new());
 }
+
+/// The macOS accent colour (System Settings › Appearance), as sRGB.
+pub fn system_accent() -> Option<[f32; 4]> {
+    use objc2_app_kit::{NSColor, NSColorSpace};
+    MainThreadMarker::new()?;
+    let color = NSColor::controlAccentColor().colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
+    Some([
+        color.redComponent() as f32,
+        color.greenComponent() as f32,
+        color.blueComponent() as f32,
+        1.,
+    ])
+}

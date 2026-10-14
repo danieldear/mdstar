@@ -36,7 +36,7 @@ pub const MARKDOWN: [&str; 5] = ["md", "markdown", "mdown", "mkd", "txt"];
 
 fn theme(app: &App, system: ThemeMode) -> UiTheme {
     app.system_dark.set(!matches!(system, ThemeMode::Light));
-    UiTheme::from_palette(app.theme().palette())
+    UiTheme::from_palette(app.theme().palette(app.accent()))
 }
 
 fn has_doc(app: &App) -> bool {
@@ -310,6 +310,8 @@ struct Args {
     slash: bool,
     /// Snapshot only: select all rendered text.
     select_all: bool,
+    /// Snapshot only: open the Appearance popover.
+    popover: bool,
 }
 
 fn args() -> Result<Args, String> {
@@ -326,6 +328,7 @@ fn args() -> Result<Args, String> {
         mode: None,
         slash: false,
         select_all: false,
+        popover: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -363,6 +366,7 @@ fn args() -> Result<Args, String> {
             "--settings" => a.settings = true,
             "--slash" => a.slash = true,
             "--select-all" => a.select_all = true,
+            "--appearance" => a.popover = true,
             "--mode" => {
                 a.mode = Some(match it.next().as_deref() {
                     Some("preview") => Mode::Preview,
@@ -488,6 +492,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.settings {
             app.open_settings();
         }
+        app.appearance_open = args.popover;
         if let Some(tab) = args.tab {
             app.show_sidebar(tab);
         }
@@ -730,6 +735,7 @@ mod tests {
                 app.settings.sidebar = sidebar;
                 app.settings.typeface = typeface.into();
                 app.show_settings = settings;
+                app.appearance_open = !settings;
                 view::view(&app)
                     .build()
                     .unwrap_or_else(|e| panic!("{}: {e}", file.display()));

@@ -135,6 +135,8 @@ pub struct App {
     /// The system appearance, as last reported to the theme callback.
     pub system_dark: Cell<bool>,
     pub show_settings: bool,
+    /// The toolbar's quick Appearance popover.
+    pub appearance_open: bool,
     /// The settings dropdown that is open.
     pub open_select: Option<&'static str>,
     /// Installed font families, loaded when settings first open.
@@ -218,6 +220,20 @@ impl App {
 
     pub fn theme(&self) -> Theme {
         self.settings.theme(self.system_dark.get())
+    }
+
+    /// The accent in use: a fixed colour, the system's, or `None` for the
+    /// theme's own.
+    pub fn accent(&self) -> Option<[f32; 4]> {
+        use crate::settings::Accent;
+        match self.settings.accent {
+            Accent::Theme => None,
+            #[cfg(target_os = "macos")]
+            Accent::System => crate::macos::system_accent(),
+            #[cfg(not(target_os = "macos"))]
+            Accent::System => None,
+            fixed => fixed.fixed(self.theme().dark()).and_then(volt_ui_kit::parse_hex),
+        }
     }
 
     /// Change settings and save them.

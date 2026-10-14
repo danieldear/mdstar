@@ -24,15 +24,24 @@ pub enum Theme {
     Paper,
     Sepia,
     Mist,
+    SolarizedLight,
+    Latte,
+    RoseDawn,
     Graphite,
     Midnight,
     Nord,
+    Dracula,
+    TokyoNight,
+    SolarizedDark,
+    Mocha,
+    RosePine,
 }
 
-/// The colours a theme assigns.
+/// The colours a theme assigns (opaque `#RRGGBB`).
 pub struct Colors {
     pub page: &'static str,
-    /// Sidebar fill, drawn over the window's translucent material.
+    /// The sidebar's tint; translucent over the window material when the
+    /// sidebar is glass.
     pub sidebar: &'static str,
     /// Code blocks and table headers.
     pub raised: &'static str,
@@ -47,19 +56,123 @@ pub struct Colors {
     pub mark_current: &'static str,
 }
 
-impl Theme {
-    pub const LIGHT: [Theme; 3] = [Theme::Paper, Theme::Sepia, Theme::Mist];
-    pub const DARK: [Theme; 3] = [Theme::Graphite, Theme::Midnight, Theme::Nord];
+/// (theme, name, page, sidebar, raised, hover, text, muted, border, accent,
+/// on accent, mark, current mark)
+type Row = (Theme, &'static str, [&'static str; 11]);
+const THEMES: [Row; 14] = [
+    (Theme::Paper, "Paper", ["#FFFFFF", "#F1F1F4", "#F6F7F9", "#EBEBEF", "#1F2023", "#6B6E76", "#E3E4E8", "#0A66D8", "#FFFFFF", "#FFE7A0", "#FFBF47"]),
+    (Theme::Sepia, "Sepia", ["#F8F1E3", "#EEE3CC", "#F0E6D2", "#E6DAC1", "#3D3023", "#84705A", "#E1D3B8", "#A2541C", "#FFF8EE", "#F2D07A", "#E79C34"]),
+    (Theme::Mist, "Mist", ["#F6F8FB", "#E9EEF5", "#ECF0F5", "#E1E7EF", "#1D2632", "#64728A", "#DCE3EC", "#2563EB", "#FFFFFF", "#FCE38A", "#F9B728"]),
+    (Theme::SolarizedLight, "Solarized", ["#FDF6E3", "#EEE8D5", "#F4EDD9", "#E9E2CC", "#3E4D55", "#6C7C80", "#E4DCC5", "#268BD2", "#FDF6E3", "#F5E1A4", "#E5B83A"]),
+    (Theme::Latte, "Latte", ["#EFF1F5", "#E6E9EF", "#E8EBF1", "#DCE0E8", "#4C4F69", "#6C6F85", "#CCD0DA", "#8839EF", "#EFF1F5", "#F5DFA0", "#DF8E1D"]),
+    (Theme::RoseDawn, "Rosé Dawn", ["#FAF4ED", "#F2E9E1", "#FFFAF3", "#EDE4DC", "#575279", "#797593", "#DFDAD9", "#286983", "#FAF4ED", "#F6E3C0", "#EA9D34"]),
+    (Theme::Graphite, "Graphite", ["#1C1C1F", "#232327", "#26262B", "#303036", "#E4E4E7", "#9A9AA3", "#313137", "#6AA8FF", "#0B1220", "#5E4C12", "#A87B17"]),
+    (Theme::Midnight, "Midnight", ["#0B0C0E", "#111317", "#16191E", "#1E2229", "#D8DBE0", "#858C98", "#1F232A", "#7DB3FF", "#081120", "#4F400E", "#9C7412"]),
+    (Theme::Nord, "Nord", ["#2E3440", "#292E39", "#353C4A", "#3E4656", "#E5E9F0", "#A0AABB", "#3B4252", "#88C0D0", "#242933", "#6B5A2E", "#B8924A"]),
+    (Theme::Dracula, "Dracula", ["#282A36", "#21222C", "#303241", "#44475A", "#F8F8F2", "#9AA0C4", "#3B3E51", "#BD93F9", "#282A36", "#5D5B2A", "#A89A3B"]),
+    (Theme::TokyoNight, "Tokyo Night", ["#1A1B26", "#16161E", "#1F2335", "#292E42", "#C0CAF5", "#7A82A8", "#292E42", "#7AA2F7", "#1A1B26", "#4A4528", "#9E8A3A"]),
+    (Theme::SolarizedDark, "Solarized Dark", ["#002B36", "#00242D", "#073642", "#0B404D", "#B9C5C6", "#839496", "#0E3A45", "#268BD2", "#FDF6E3", "#5A4A0E", "#B58900"]),
+    (Theme::Mocha, "Mocha", ["#1E1E2E", "#181825", "#262637", "#313244", "#CDD6F4", "#9399B2", "#313244", "#CBA6F7", "#1E1E2E", "#554F2E", "#A08A3E"]),
+    (Theme::RosePine, "Rosé Pine", ["#191724", "#1F1D2E", "#26233A", "#2A2837", "#E0DEF4", "#908CAA", "#2A2837", "#9CCFD8", "#191724", "#554A2B", "#9C7A3E"]),
+];
+
+/// An accent colour, like macOS's: the theme's own, the system's, or one
+/// of the macOS colours.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Accent {
+    #[default]
+    Theme,
+    System,
+    Blue,
+    Purple,
+    Pink,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Graphite,
+}
+
+impl Accent {
+    pub const ALL: [Accent; 10] = [
+        Accent::Theme,
+        Accent::System,
+        Accent::Blue,
+        Accent::Purple,
+        Accent::Pink,
+        Accent::Red,
+        Accent::Orange,
+        Accent::Yellow,
+        Accent::Green,
+        Accent::Graphite,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
-            Theme::Paper => "Paper",
-            Theme::Sepia => "Sepia",
-            Theme::Mist => "Mist",
-            Theme::Graphite => "Graphite",
-            Theme::Midnight => "Midnight",
-            Theme::Nord => "Nord",
+            Accent::Theme => "Theme",
+            Accent::System => "System",
+            Accent::Blue => "Blue",
+            Accent::Purple => "Purple",
+            Accent::Pink => "Pink",
+            Accent::Red => "Red",
+            Accent::Orange => "Orange",
+            Accent::Yellow => "Yellow",
+            Accent::Green => "Green",
+            Accent::Graphite => "Graphite",
         }
+    }
+
+    /// The macOS colour for light and dark appearances; `None` for the
+    /// theme's and the system's accents.
+    pub fn fixed(self, dark: bool) -> Option<&'static str> {
+        let (light, night) = match self {
+            Accent::Theme | Accent::System => return None,
+            Accent::Blue => ("#007AFF", "#0A84FF"),
+            Accent::Purple => ("#9F3FD0", "#BF5AF2"),
+            Accent::Pink => ("#E3245A", "#FF375F"),
+            Accent::Red => ("#E5342A", "#FF453A"),
+            Accent::Orange => ("#E38400", "#FF9F0A"),
+            Accent::Yellow => ("#C99A00", "#FFD60A"),
+            Accent::Green => ("#24A148", "#30D158"),
+            Accent::Graphite => ("#7A7A80", "#98989D"),
+        };
+        Some(if dark { night } else { light })
+    }
+}
+
+/// Text on an accent: white, or near black on light accents.
+fn on(accent: [f32; 4]) -> &'static str {
+    let luma = 0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2];
+    if luma > 0.62 { "#14141A" } else { "#FFFFFF" }
+}
+
+impl Theme {
+    pub const LIGHT: [Theme; 6] = [
+        Theme::Paper,
+        Theme::Sepia,
+        Theme::Mist,
+        Theme::SolarizedLight,
+        Theme::Latte,
+        Theme::RoseDawn,
+    ];
+    pub const DARK: [Theme; 8] = [
+        Theme::Graphite,
+        Theme::Midnight,
+        Theme::Nord,
+        Theme::Dracula,
+        Theme::TokyoNight,
+        Theme::SolarizedDark,
+        Theme::Mocha,
+        Theme::RosePine,
+    ];
+
+    fn row(self) -> &'static Row {
+        THEMES.iter().find(|(t, _, _)| *t == self).expect("every theme has colours")
+    }
+
+    pub fn name(self) -> &'static str {
+        self.row().1
     }
 
     pub fn dark(self) -> bool {
@@ -67,96 +180,37 @@ impl Theme {
     }
 
     pub fn colors(self) -> Colors {
-        match self {
-            Theme::Paper => Colors {
-                page: "#FFFFFF",
-                sidebar: "#F3F3F5C8",
-                raised: "#F6F7F9",
-                hover: "#EBEBEF",
-                text: "#1F2023",
-                muted: "#6B6E76",
-                border: "#E3E4E8",
-                accent: "#0A66D8",
-                on_accent: "#FFFFFF",
-                mark: "#FFE7A0",
-                mark_current: "#FFBF47",
-            },
-            Theme::Sepia => Colors {
-                page: "#F8F1E3",
-                sidebar: "#EFE5D0D8",
-                raised: "#F0E6D2",
-                hover: "#E6DAC1",
-                text: "#3D3023",
-                muted: "#84705A",
-                border: "#E1D3B8",
-                accent: "#A2541C",
-                on_accent: "#FFF8EE",
-                mark: "#F2D07A",
-                mark_current: "#E79C34",
-            },
-            Theme::Mist => Colors {
-                page: "#F6F8FB",
-                sidebar: "#EBEFF5D0",
-                raised: "#ECF0F5",
-                hover: "#E1E7EF",
-                text: "#1D2632",
-                muted: "#64728A",
-                border: "#DCE3EC",
-                accent: "#2563EB",
-                on_accent: "#FFFFFF",
-                mark: "#FCE38A",
-                mark_current: "#F9B728",
-            },
-            Theme::Graphite => Colors {
-                page: "#1C1C1F",
-                sidebar: "#232327C8",
-                raised: "#26262B",
-                hover: "#303036",
-                text: "#E4E4E7",
-                muted: "#9A9AA3",
-                border: "#313137",
-                accent: "#6AA8FF",
-                on_accent: "#0B1220",
-                mark: "#5E4C12",
-                mark_current: "#A87B17",
-            },
-            Theme::Midnight => Colors {
-                page: "#0B0C0E",
-                sidebar: "#111317D0",
-                raised: "#16191E",
-                hover: "#1E2229",
-                text: "#D8DBE0",
-                muted: "#858C98",
-                border: "#1F232A",
-                accent: "#7DB3FF",
-                on_accent: "#081120",
-                mark: "#4F400E",
-                mark_current: "#9C7412",
-            },
-            Theme::Nord => Colors {
-                page: "#2E3440",
-                sidebar: "#292E39D8",
-                raised: "#353C4A",
-                hover: "#3E4656",
-                text: "#E5E9F0",
-                muted: "#A0AABB",
-                border: "#3B4252",
-                accent: "#88C0D0",
-                on_accent: "#242933",
-                mark: "#6B5A2E",
-                mark_current: "#B8924A",
-            },
+        let [page, sidebar, raised, hover, text, muted, border, accent, on_accent, mark, mark_current] =
+            self.row().2;
+        Colors {
+            page,
+            sidebar,
+            raised,
+            hover,
+            text,
+            muted,
+            border,
+            accent,
+            on_accent,
+            mark,
+            mark_current,
         }
     }
 
-    /// The kit palette for this theme.
-    pub fn palette(self) -> Palette {
+    /// The kit palette for this theme with `accent` (an `#RRGGBB` override,
+    /// or the theme's own).
+    pub fn palette(self, accent: Option<[f32; 4]>) -> Palette {
         let c = self.colors();
         let dark = self.dark();
         let mut p = if dark {
             Palette::dark()
         } else {
             Palette::light()
+        };
+        let accent = accent.or_else(|| parse_hex(c.accent));
+        let on_accent = match accent {
+            Some(a) if accent != parse_hex(c.accent) => on(a),
+            _ => c.on_accent,
         };
         let roles = [
             (Role::Base100, c.page),
@@ -165,11 +219,8 @@ impl Theme {
             (Role::BaseContent, c.text),
             (Role::Muted, c.muted),
             (Role::Border, c.border),
-            (Role::Primary, c.accent),
-            (Role::PrimaryContent, c.on_accent),
-            (Role::Accent, c.accent),
-            (Role::AccentContent, c.on_accent),
-            (Role::Info, c.accent),
+            (Role::PrimaryContent, on_accent),
+            (Role::AccentContent, on_accent),
             (Role::Success, if dark { "#4ADE80" } else { "#16A34A" }),
             (Role::Warning, if dark { "#FBBF24" } else { "#B45309" }),
             (Role::Error, if dark { "#F87171" } else { "#DC2626" }),
@@ -177,6 +228,11 @@ impl Theme {
         for (role, hex) in roles {
             if let Some(color) = parse_hex(hex) {
                 p.set(role, color);
+            }
+        }
+        if let Some(a) = accent {
+            for role in [Role::Primary, Role::Accent, Role::Info] {
+                p.set(role, a);
             }
         }
         p
@@ -278,6 +334,7 @@ pub struct Settings {
     pub appearance: Appearance,
     pub light_theme: Theme,
     pub dark_theme: Theme,
+    pub accent: Accent,
     /// A [`TYPEFACES`] name, or any installed family.
     pub typeface: String,
     /// A [`CODE_FONTS`] name, or any installed family.
@@ -289,6 +346,8 @@ pub struct Settings {
     pub sidebar: bool,
     pub sidebar_tab: SidebarTab,
     pub sidebar_width: f32,
+    /// The sidebar shows the desktop through it, blurred.
+    pub sidebar_glass: bool,
     /// Window background opacity, 1 for a solid window.
     pub opacity: f32,
     /// Blur what is behind a translucent window.
@@ -307,6 +366,7 @@ impl Default for Settings {
             appearance: Appearance::System,
             light_theme: Theme::Paper,
             dark_theme: Theme::Graphite,
+            accent: Accent::Theme,
             typeface: "System".into(),
             code_font: "SF Mono".into(),
             font_size: DEFAULT_SIZE,
@@ -315,6 +375,7 @@ impl Default for Settings {
             sidebar: true,
             sidebar_tab: SidebarTab::Files,
             sidebar_width: 264.,
+            sidebar_glass: true,
             opacity: 1.,
             blur: true,
             folders: Vec::new(),
@@ -339,25 +400,35 @@ impl Settings {
         }
     }
 
-    /// The window background for these settings.
+    /// The window background for these settings. Under a solid page only
+    /// a glass sidebar shows the window's own background, so it is kept light.
     pub fn window_background(&self) -> volt_ui_kit::native::WindowBackground {
         use volt_ui_kit::native::WindowBackground;
-        if self.opacity >= 0.999 {
-            WindowBackground::Opaque
-        } else if self.blur {
-            WindowBackground::Blur {
-                opacity: self.opacity,
-            }
+        if !self.translucent() && !self.sidebar_glass {
+            return WindowBackground::Opaque;
+        }
+        let opacity = if self.translucent() { self.opacity } else { 0.3 };
+        if self.blur {
+            WindowBackground::Blur { opacity }
         } else {
-            WindowBackground::Transparent {
-                opacity: self.opacity,
-            }
+            WindowBackground::Transparent { opacity }
         }
     }
 
-    /// Whether the window lets the desktop show through.
+    /// Whether the page lets the desktop show through.
     pub fn translucent(&self) -> bool {
         self.opacity < 0.999
+    }
+
+    /// Whether anything shows the desktop: the page or the sidebar.
+    pub fn glass(&self) -> bool {
+        self.translucent() || self.sidebar_glass
+    }
+
+    /// The sidebar fill: the theme tint, translucent over glass.
+    pub fn sidebar_fill(&self, theme: Theme) -> String {
+        let alpha = if self.glass() { "99" } else { "FF" };
+        format!("{}{alpha}", theme.colors().sidebar)
     }
 
     /// The font family list for body text.
