@@ -32,7 +32,8 @@ pub struct Options {
     /// Pixels per point in the embedded images.
     pub scale: f32,
     pub dark: bool,
-    /// Stop after this many pages; long documents end with a note.
+    /// Stop after this many pages (a Quick Look preview); the last page then
+    /// says so. Exports take every page.
     pub max_pages: usize,
 }
 
@@ -43,7 +44,7 @@ impl Default for Options {
             page: 1400.,
             scale: 2.,
             dark: false,
-            max_pages: 60,
+            max_pages: usize::MAX,
         }
     }
 }
@@ -79,38 +80,33 @@ fn pages(doc: &Doc, o: Options) -> Result<Vec<Page>, String> {
     let keys: Vec<String> = (0..units.len())
         .map(|i| render::unit_key(&units, i))
         .collect();
-    let build = |offset: f32| -> Element<App> {
-        let ctx = Ctx {
-            images: &doc.images,
-            dark: o.dark,
-            code_view: matches!(doc.kind, FileKind::Code(language) if language != "csv"),
-            copied: None,
-            typo: view::typography(&app),
-            find: None,
-            menu: None,
-            controls: false,
-        };
-        let rows: Vec<Element<App>> = (0..units.len())
-            .map(|i| render::row(&units, i, &ctx))
-            .collect();
-        // Inside a scroll view rows keep their natural heights; the page
-        // shows the slice starting at `offset`.
-        vstack![vstack(rows).key("export-rows").offset(0., -offset)]
+    let ctx = Ctx {
+        images: &doc.images,
+        dark: o.dark,
+        code_view: matches!(doc.kind, FileKind::Code(language) if language != "csv"),
+        copied: None,
+        typo: view::typography(&app),
+        find: None,
+        menu: None,
+        controls: false,
+    };
+    // Rows `range` of the document at their natural heights: inside a
+    // scroll view nothing is squeezed to fit the viewport.
+    let page = |range: std::ops::Range<usize>| -> Element<App> {
+        let rows: Vec<Element<App>> = range.map(|i| render::row(&units, i, &ctx)).collect();
+        vstack![vstack(rows).key("export-rows")]
             .key("export")
             .width(o.width)
             .scroll(Scroll::Vertical)
             .scrollbars(Scrollbars::Hidden)
             .into()
     };
-    let layout = |offset: f32, height: f32, painter: &mut RasterPainter| {
-        let (tree, handlers) = build(offset)
-            .build()
-            .map_err(|e| e.to_string())?
-            .into_parts();
+    let layout = |element: Element<App>, height: f32, scale: f32, painter: &mut RasterPainter| {
+        let (tree, handlers) = element.build().map_err(|e| e.to_string())?.into_parts();
         let mut runtime =
             Runtime::new(tree, &handlers, &Bindings::default()).map_err(|e| e.to_string())?;
-        let viewport = Viewport::new(o.width * o.scale, height * o.scale, o.scale)
-            .ok_or("invalid page size")?;
+        let viewport =
+            Viewport::new(o.width * scale, height * scale, scale).ok_or("invalid page size")?;
         painter.set_viewport(viewport);
         runtime
             .layout(viewport, &Bindings::default(), painter)
@@ -118,25 +114,49 @@ fn pages(doc: &Doc, o: Options) -> Result<Vec<Page>, String> {
         Ok::<_, String>(runtime)
     };
 
-    // Where each row starts and ends, to break pages between rows.
+    // Measure every row. The kit lays out only what falls inside the
+    // viewport, and viewports have a size limit, so measure in batches:
+    // each records the rows it laid out and the next starts after them.
     let mut painter = RasterPainter::new(
         Viewport::new(o.width * o.scale, o.page * o.scale, o.scale).ok_or("invalid page size")?,
     );
-    let runtime = layout(0., o.page, &mut painter)?;
-    let rows: Vec<[f32; 2]> = keys
-        .iter()
-        .filter_map(|key| {
-            let b = runtime.boxes().iter().find(|b| &b.id == key)?;
-            let [_, y, _, h] = b.bounds.bounds();
-            Some([y / o.scale, (y + h) / o.scale])
-        })
-        .collect();
-    let breaks = page_breaks(&rows, o.page, o.max_pages);
+    let tallest = MAX_PIXELS / o.scale;
+    let mut rows = vec![0f32; units.len()];
+    let mut next = 0;
+    // Enough for the page limit; later rows are not shown.
+    let wanted = o.page * o.max_pages as f32;
+    let mut measured = 0.;
+    while next < units.len() && measured < wanted {
+        let batch = next..units.len().min(next + MEASURE_ROWS);
+        let runtime = layout(page(batch.clone()), tallest, o.scale, &mut painter)?;
+        let heights: std::collections::HashMap<&str, f32> = runtime
+            .boxes()
+            .iter()
+            .map(|b| (b.id.as_str(), b.bounds.bounds()[3] / o.scale))
+            .collect();
+        let start = next;
+        while let Some(h) = keys[..batch.end]
+            .get(next)
+            .and_then(|k| heights.get(k.as_str()))
+        {
+            rows[next] = *h;
+            measured += *h;
+            next += 1;
+        }
+        if next == start {
+            next += 1; // A row with no box takes no room.
+        }
+    }
 
+    // Each page lays out and draws only its own rows; a page taller than
+    // the pixel limit (one huge row) is drawn at a lower scale.
     let mut out = Vec::new();
-    for [top, bottom] in breaks {
-        let height = (bottom - top).max(1.);
-        let runtime = layout(top, height, &mut painter)?;
+    let headings: Vec<bool> = (0..units.len())
+        .map(|i| units[i].heading().is_some())
+        .collect();
+    let mut draw = |element: Element<App>, height: f32| -> Result<Page, String> {
+        let scale = o.scale.min(MAX_PIXELS / height).max(0.25);
+        let runtime = layout(element, height, scale, &mut painter)?;
         let batches = runtime.paint_ui(&mut painter, &ui);
         let pixmap = painter.rasterize(&batches, background)?;
         let rgb: Vec<u8> = pixmap
@@ -144,38 +164,66 @@ fn pages(doc: &Doc, o: Options) -> Result<Vec<Page>, String> {
             .chunks_exact(4)
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect();
-        out.push(Page {
+        Ok(Page {
             height,
             size: [pixmap.width(), pixmap.height()],
             rgb,
-        });
+        })
+    };
+    let ranges = page_ranges(&rows, &headings, o.page, o.max_pages);
+    let shown = ranges.last().map_or(0, |r| r.end);
+    for range in ranges {
+        let height = rows[range.clone()].iter().sum::<f32>().max(1.);
+        out.push(draw(page(range), height)?);
+    }
+    // A preview cut short says so rather than just stopping.
+    if shown < units.len() {
+        let note = format!(
+            "This preview shows the first {} pages. Open the file in MD Star to read the rest.",
+            out.len()
+        );
+        let element = vstack![text(note).font_size(13.).color(ColorToken::Muted)]
+            .key("export-more")
+            .width(o.width)
+            .padding(render::margin_x(Some(o.width)), Edge::Horizontal)
+            .padding(28., Edge::Vertical)
+            .into();
+        out.push(draw(element, 80.)?);
     }
     Ok(out)
 }
 
-/// Page spans [top, bottom] covering the rows, each at most `page` tall and
-/// breaking between rows; a row taller than a page is cut across pages.
-fn page_breaks(rows: &[[f32; 2]], page: f32, max_pages: usize) -> Vec<[f32; 2]> {
-    let end = rows.iter().map(|r| r[1]).fold(0., f32::max).max(1.);
+/// The kit's largest viewport side, in pixels.
+const MAX_PIXELS: f32 = 16384.;
+/// Rows laid out per measuring pass: more than fit in one viewport.
+const MEASURE_ROWS: usize = 500;
+
+/// Rows (by height) grouped into pages at most `page` tall. Rows are never
+/// cut: a row taller than a page gets a page of its own, as tall as it is.
+/// A heading never ends a page; it moves on with the block it introduces.
+fn page_ranges(
+    rows: &[f32],
+    headings: &[bool],
+    page: f32,
+    max_pages: usize,
+) -> Vec<std::ops::Range<usize>> {
     let mut out = Vec::new();
-    let mut top = 0.;
-    while top < end && out.len() < max_pages {
-        let limit = top + page;
-        if limit >= end {
-            out.push([top, end]);
-            break;
+    let mut start = 0;
+    while start < rows.len() && out.len() < max_pages {
+        let mut end = start + 1;
+        let mut height = rows[start];
+        while end < rows.len() && height + rows[end] <= page {
+            height += rows[end];
+            end += 1;
         }
-        // The last row start that leaves the page at least half full.
-        let cut = rows
-            .iter()
-            .map(|r| r[0])
-            .filter(|y| *y > top + page * 0.5 && *y <= limit)
-            .fold(None, |best: Option<f32>, y| {
-                Some(best.map_or(y, |b| b.max(y)))
-            })
-            .unwrap_or(limit);
-        out.push([top, cut]);
-        top = cut;
+        while end < rows.len() && end - start > 1 && headings.get(end - 1) == Some(&true) {
+            end -= 1;
+        }
+        out.push(start..end);
+        start = end;
+    }
+    if rows.is_empty() {
+        out.push(0..0);
     }
     out
 }
@@ -258,54 +306,86 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pages_break_between_rows_and_cover_everything() {
-        let rows: Vec<[f32; 2]> = (0..30)
-            .map(|i| [i as f32 * 100., i as f32 * 100. + 90.])
-            .collect();
-        let pages = page_breaks(&rows, 1000., 60);
-        assert_eq!(pages.first().unwrap()[0], 0.);
-        assert_eq!(pages.last().unwrap()[1], 2990.);
+    fn pages_hold_whole_rows_and_cover_everything() {
+        let rows = vec![100.; 30];
+        let plain = vec![false; 30];
+        let pages = page_ranges(&rows, &plain, 1000., 60);
+        assert_eq!(pages.first().unwrap().start, 0);
+        assert_eq!(pages.last().unwrap().end, 30);
         for w in pages.windows(2) {
-            assert_eq!(w[0][1], w[1][0], "pages meet");
-            assert!(
-                rows.iter().any(|r| r[0] == w[0][1]),
-                "breaks fall between rows"
-            );
+            assert_eq!(w[0].end, w[1].start, "pages meet");
         }
-        assert!(pages.iter().all(|p| p[1] - p[0] <= 1000.));
-        // A row taller than a page is cut.
-        let tall = page_breaks(&[[0., 2500.]], 1000., 60);
-        assert_eq!(tall, [[0., 1000.], [1000., 2000.], [2000., 2500.]]);
-        assert_eq!(page_breaks(&rows, 100., 3).len(), 3, "page limit");
+        assert!(
+            pages
+                .iter()
+                .all(|r| rows[r.clone()].iter().sum::<f32>() <= 1000.)
+        );
+        // A row taller than a page is never cut: it gets its own page.
+        assert_eq!(
+            page_ranges(&[300., 2500., 300.], &plain, 1000., 60),
+            [0..1, 1..2, 2..3]
+        );
+        assert_eq!(page_ranges(&rows, &plain, 100., 3).len(), 3, "page limit");
+        assert_eq!(
+            page_ranges(&[], &[], 1000., 60),
+            vec![std::ops::Range { start: 0, end: 0 }]
+        );
+        // A heading that would end a page starts the next one instead.
+        let mut headings = plain.clone();
+        headings[9] = true;
+        let pages = page_ranges(&rows, &headings, 1000., 60);
+        assert_eq!(pages[0], 0..9);
+        assert_eq!(pages[1].start, 9);
     }
 
     #[test]
-    fn a_document_becomes_a_valid_pdf() {
+    fn every_page_has_content_and_the_pages_cover_the_document() {
         let dir = std::env::temp_dir().join(format!("mdstar-export-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("doc.md");
         let mut text = String::from(
             "# Title\n\nSome **text** with $E = mc^2$ :rocket:.\n\n```mermaid\ngraph TD\n  A --> B\n```\n",
         );
-        for i in 0..60 {
+        for i in 0..80 {
             text.push_str(&format!(
                 "\nParagraph {i} with enough words to wrap across the page width a little.\n"
             ));
+            if i % 20 == 0 {
+                text.push_str("\n```text\none\ntwo\nthree\n```\n");
+            }
         }
+        text.push_str("\n## The end\n\nLast words.\n");
         std::fs::write(&path, text).unwrap();
+        let doc = app::load(&path).unwrap();
+        let pages = pages(&doc, Options::default()).unwrap();
         let bytes = pdf(&path, Options::default()).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        let head = String::from_utf8_lossy(&bytes[..9]);
-        assert_eq!(head, "%PDF-1.4\n");
-        let tail = String::from_utf8_lossy(&bytes[bytes.len() - 6..]);
-        assert_eq!(tail, "%%EOF\n");
-        let text = String::from_utf8_lossy(&bytes);
-        let count: usize = text
-            .split("/Count ")
-            .nth(1)
-            .and_then(|s| s.split_whitespace().next())
-            .and_then(|n| n.parse().ok())
-            .unwrap();
-        assert!(count >= 2, "a long document spans pages: {count}");
+        assert!(
+            pages.len() >= 3,
+            "a long document spans pages: {}",
+            pages.len()
+        );
+        // 80 paragraphs of at least a line each, plus headings and code.
+        let total: f32 = pages.iter().map(|p| p.height).sum();
+        assert!(total > 80. * 28., "pages cover the document: {total}");
+        for (i, p) in pages.iter().enumerate() {
+            let paper = &p.rgb[..3];
+            let ink = p.rgb.chunks_exact(3).filter(|px| *px != paper).count();
+            assert!(ink > 1000, "page {i} is blank");
+        }
+        // Every page by default; a limited preview ends with a note.
+        assert!(
+            pages.iter().all(|p| p.height > 80.),
+            "no note on a full export"
+        );
+        let limited = Options {
+            max_pages: 2,
+            ..Options::default()
+        };
+        let short = super::pages(&doc, limited).unwrap();
+        assert_eq!(short.len(), 3, "two pages and the note");
+        assert_eq!(short[2].height, 80.);
+        assert_eq!(&bytes[..9], b"%PDF-1.4\n");
+        assert_eq!(&bytes[bytes.len() - 6..], b"%%EOF\n");
     }
 }

@@ -63,9 +63,9 @@ mod quicklook {
         unsafe trait QLPreviewingController: NSObjectProtocol {}
     );
 
-    /// The longest Quick Look waits on is a few seconds; very long documents
-    /// show their first pages.
-    const MAX_PAGES: usize = 40;
+    /// Quick Look waits on the whole PDF, so very long documents show their
+    /// first pages (about a second's work) and a note.
+    const MAX_PAGES: usize = 20;
 
     define_class!(
         // SAFETY: QLPreviewProvider has no subclassing requirements beyond
