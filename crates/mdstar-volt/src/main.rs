@@ -312,6 +312,8 @@ struct Args {
     select_all: bool,
     /// Snapshot only: open the Appearance popover.
     popover: bool,
+    /// Snapshot only: hover the element with this key (shows tooltips).
+    hover: Option<String>,
 }
 
 fn args() -> Result<Args, String> {
@@ -329,6 +331,7 @@ fn args() -> Result<Args, String> {
         slash: false,
         select_all: false,
         popover: false,
+        hover: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -367,6 +370,7 @@ fn args() -> Result<Args, String> {
             "--slash" => a.slash = true,
             "--select-all" => a.select_all = true,
             "--appearance" => a.popover = true,
+            "--hover" => a.hover = it.next(),
             "--mode" => {
                 a.mode = Some(match it.next().as_deref() {
                     Some("preview") => Mode::Preview,
@@ -436,6 +440,7 @@ fn snapshot(
     scale: f32,
     scroll: f32,
     select_all: bool,
+    hover: Option<&str>,
 ) -> Result<(), String> {
     let (doc, mut handlers) = view::view(app).build().map_err(|e| e.to_string())?.into_parts();
     let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).map_err(|e| e.to_string())?;
@@ -453,6 +458,17 @@ fn snapshot(
     }
     if select_all {
         runtime.select_all_text(&mut painter);
+    }
+    if let Some(key) = hover {
+        let center = runtime.boxes().iter().find(|b| b.id == key).map(|b| {
+            let [x, y, w, h] = b.bounds.bounds();
+            [x + w / 2., y + h / 2.]
+        });
+        if let Some([x, y]) = center {
+            runtime.set_tooltips_active(true);
+            runtime.pointer_move(x, y);
+            settle(&mut runtime, &mut handlers, app, viewport, &mut painter)?;
+        }
     }
     runtime.settle_animations();
     let ui = theme(app, ThemeMode::Light);
@@ -515,6 +531,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             args.scale,
             args.scroll,
             args.select_all,
+            args.hover.as_deref(),
         )?);
     }
     Application::new("MD Star", app, view::view)
