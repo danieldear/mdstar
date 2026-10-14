@@ -616,7 +616,7 @@ impl App {
                 doc.path == *path
                     && std::fs::read_to_string(path).is_ok_and(|disk| disk != doc.saved)
             };
-            if self.doc.as_ref().is_some_and(&changed) {
+            if self.doc.as_ref().is_some_and(changed) {
                 if self.doc.as_ref().is_some_and(Doc::dirty) {
                     self.save_error = Some(format!(
                         "{} changed on disk since it was opened.",

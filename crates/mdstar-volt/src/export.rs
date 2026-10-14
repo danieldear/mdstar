@@ -161,7 +161,9 @@ fn pages(doc: &Doc, o: Options) -> Result<Vec<Page>, String> {
         let pixmap = painter.rasterize(&batches, background)?;
         let rgb: Vec<u8> = pixmap
             .data()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2]])
             .collect();
         Ok(Page {
@@ -369,8 +371,14 @@ mod tests {
         let total: f32 = pages.iter().map(|p| p.height).sum();
         assert!(total > 80. * 28., "pages cover the document: {total}");
         for (i, p) in pages.iter().enumerate() {
-            let paper = &p.rgb[..3];
-            let ink = p.rgb.chunks_exact(3).filter(|px| *px != paper).count();
+            let paper = [p.rgb[0], p.rgb[1], p.rgb[2]];
+            let ink = p
+                .rgb
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .filter(|px| **px != paper)
+                .count();
             assert!(ink > 1000, "page {i} is blank");
         }
         // Every page by default; a limited preview ends with a note.

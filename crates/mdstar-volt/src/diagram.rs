@@ -1031,7 +1031,8 @@ fn sequence(s: &SequenceDiagram) -> Sequence {
             .filter(|(_, b)| b.start_message == m && b.end_message >= b.start_message)
             .map(|(i, b)| (i, b.end_message))
             .collect();
-        starting.sort_by(|a, b| b.1.cmp(&a.1));
+        // Outer blocks (ending later) first.
+        starting.sort_by_key(|s| std::cmp::Reverse(s.1));
         for (i, _) in starting {
             frame_top.insert(i, y);
             y += 28.;
