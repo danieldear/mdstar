@@ -15,6 +15,56 @@ publish = false
 name = "mdstar-volt"
 path = "src/main.rs"
 
+# `cargo volt bundle` builds MD Star.app from this; `cargo volt release`
+# signs it with Developer ID, notarizes it and builds a disk image.
+[package.metadata.volt.bundle]
+name = "MD Star"
+identifier = "dev.mdstar.volt"
+icon = "../mdstar-app/icons/icon.icns"
+minimum-system-version = "13.0"
+category = "public.app-category.productivity"
+copyright = "MD Star contributors. MIT OR Apache-2.0."
+notary-profile = "mdstar"
+
+# Markdown is ours by default.
+[[package.metadata.volt.bundle.document-types]]
+name = "Markdown Document"
+role = "Editor"
+rank = "Default"
+icon = "icon.icns"
+content-types = ["net.daringfireball.markdown", "public.markdown"]
+
+# Markdown extensions macOS has no type for, claimed by name.
+[[package.metadata.volt.bundle.document-types]]
+name = "Markdown Document"
+role = "Editor"
+rank = "Default"
+icon = "icon.icns"
+extensions = ["mdown", "mkd", "mkdn", "mdx"]
+
+# Text, data and source files list MD Star under Open With.
+[[package.metadata.volt.bundle.document-types]]
+name = "Text and Data"
+role = "Editor"
+rank = "Alternate"
+content-types = [
+    "public.plain-text", "public.json", "public.xml", "public.yaml",
+    "public.comma-separated-values-text", "public.tab-separated-values-text",
+    "public.source-code", "public.log", "public.html", "public.toml", "com.microsoft.ini",
+]
+
+[[package.metadata.volt.bundle.document-types]]
+name = "Configuration File"
+role = "Editor"
+rank = "Alternate"
+extensions = ["env", "lock", "json5", "jsonc", "conf", "cfg", "properties"]
+
+[[package.metadata.volt.bundle.document-types]]
+name = "Folder"
+role = "Viewer"
+rank = "Alternate"
+content-types = ["public.folder"]
+
 [dependencies]
 mdstar-core = { path = "../mdstar-core" }
 serde = { version = "1", features = ["derive"] }
