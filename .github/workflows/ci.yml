@@ -6,10 +6,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # The app builds against this Volt UI Kit commit until the kit is published.
+  # It is a private repository: VOLT_UI_KIT_TOKEN reads it.
+  VOLT_UI_KIT_REF: 7294f750d60b49559e1d13f60941b266b07686f8
 
 jobs:
   rust:
-    name: Rust Checks
+    name: Libraries
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -24,8 +27,6 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
-      # The app (crates/mdstar-volt) is outside the workspace until Volt UI
-      # Kit is published; these checks cover the shared libraries.
       - name: Format check
         run: cargo fmt --all -- --check
 
@@ -34,3 +35,54 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace --all-features
+
+  app:
+    name: App (macOS)
+    # Pull requests from forks get no secrets, so they cannot fetch the kit.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: crates/mdstar-volt
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # crates/mdstar-volt depends on ../../../rust/volt-ui-kit.
+      - name: Fetch Volt UI Kit
+        working-directory: .
+        env:
+          TOKEN: ${{ secrets.VOLT_UI_KIT_TOKEN }}
+        run: |
+          kit="$GITHUB_WORKSPACE/../rust/volt-ui-kit"
+          git clone --filter=blob:none "https://x-access-token:${TOKEN}@github.com/danieldear/volt-ui-kit.git" "$kit"
+          git -C "$kit" checkout --detach "$VOLT_UI_KIT_REF"
+          git -C "$kit" remote set-url origin https://github.com/danieldear/volt-ui-kit.git
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/mdstar-volt
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Install cargo volt
+        run: cargo install --locked --path "$GITHUB_WORKSPACE/../rust/volt-ui-kit" --features dev-tools --bin cargo-volt
+
+      # Ad-hoc signed: checks the bundle, its document types and the Quick
+      # Look extension build and assemble.
+      - name: Bundle
+        run: cargo volt bundle
