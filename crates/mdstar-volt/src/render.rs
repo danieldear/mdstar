@@ -11,7 +11,11 @@
 
 use std::{cell::Cell, collections::HashMap, ops::Range};
 
-use mdstar_core::document_ir::{BlockIr, InlineIr};
+use mdstar_core::{
+    document_ir::{BlockIr, InlineIr},
+    expand_emoji_text,
+    latex::to_unicode,
+};
 use volt_ui_kit::{graphics::Image, ui::prelude::*};
 
 use crate::{
@@ -33,7 +37,17 @@ const DIAGRAM_PAD: f32 = 18.;
 const HEADING_SCALE: [f32; 6] = [2.0, 1.5, 1.25, 1.1, 1.0, 0.9];
 /// Space above each heading level, in body sizes.
 const HEADING_GAP: [f32; 6] = [2.0, 2.1, 1.6, 1.3, 1.1, 1.1];
-pub const MARGIN_X: f32 = 56.;
+/// Page side margins: generous when there is room, tighter in narrow panes.
+pub fn margin_x(page_width: Option<f32>) -> f32 {
+    match page_width {
+        Some(w) if w < 560. => 18.,
+        Some(w) if w < 760. => 32.,
+        _ => 56.,
+    }
+}
+/// The narrowest a table column gets before the table scrolls sideways
+/// instead of breaking words.
+const MIN_COLUMN: f32 = 110.;
 pub const MARGIN_TOP: f32 = 44.;
 pub const MARGIN_BOTTOM: f32 = 120.;
 
@@ -41,7 +55,13 @@ pub const MARGIN_BOTTOM: f32 = 120.;
 pub struct Typography {
     pub size: f32,
     pub line: f32,
+    /// The widest the text column grows.
     pub measure: f32,
+    /// The text column's width on this page: the measure, or less when the
+    /// pane is narrower.
+    pub room: f32,
+    /// The page's side margins.
+    pub margin: f32,
     pub family: String,
     pub code_family: String,
 }
@@ -167,7 +187,7 @@ impl Unit<'_> {
     pub fn code(&self) -> Option<&BlockIr> {
         match self {
             Unit::Code { block, .. } => Some(block),
-            Unit::Block(b) if is_mermaid(b) => Some(b),
+            Unit::Block(b) if is_mermaid(b) || b.kind == "math" => Some(b),
             _ => None,
         }
     }
@@ -206,7 +226,8 @@ pub fn units(blocks: &[BlockIr]) -> Vec<Unit<'_>> {
                 }
             }
             "code" if is_mermaid(block) => out.push(Unit::Block(block)),
-            "code" | "math" => {
+            "math" => out.push(Unit::Block(block)),
+            "code" => {
                 let parts = chunks(code_source(block));
                 let count = parts.len();
                 let mut first_line = 1;
@@ -228,6 +249,11 @@ pub fn units(blocks: &[BlockIr]) -> Vec<Unit<'_>> {
     out
 }
 
+/// Display math as readable Unicode.
+fn math_text(block: &BlockIr) -> String {
+    to_unicode(block.raw.as_deref().unwrap_or(""))
+}
+
 /// A fenced Mermaid block, drawn as a diagram.
 fn is_mermaid(block: &BlockIr) -> bool {
     block.kind == "code"
@@ -239,7 +265,7 @@ fn is_mermaid(block: &BlockIr) -> bool {
 
 /// The scale a Mermaid block is drawn at on this page.
 fn diagram_scale(d: &Diagram, t: &Typography) -> f32 {
-    diagram::scale(d, t.size, t.measure - 2. * DIAGRAM_PAD - 2.)
+    diagram::scale(d, t.size, t.room - 2. * DIAGRAM_PAD - 2.)
 }
 
 fn code_source(block: &BlockIr) -> &str {
@@ -356,7 +382,7 @@ pub fn row(units: &[Unit], i: usize, ctx: &Ctx) -> Element<App> {
     let page = vstack![vstack![content].width_fraction(1.).max_width(t.measure)]
         .key(format!("{}-page", unit_key(units, i)))
         .align(Align::Center)
-        .padding(MARGIN_X, Edge::Horizontal)
+        .padding(t.margin, Edge::Horizontal)
         .padding(top, Edge::Top)
         .padding(bottom, Edge::Bottom);
     let open = ctx.menu.filter(|(row, _)| *row == i);
@@ -377,7 +403,7 @@ pub fn row(units: &[Unit], i: usize, ctx: &Ctx) -> Element<App> {
 /// An estimate of row `i`'s height, refined once the row is measured.
 pub fn estimate(units: &[Unit], i: usize, images: &HashMap<String, Image>, t: &Typography) -> f32 {
     let text = |chars: usize, size: f32, line: f32| {
-        let per_line = (t.measure / (size * 0.5)).max(10.);
+        let per_line = (t.room / (size * 0.5)).max(10.);
         (chars as f32 / per_line).ceil().max(1.) * size * line
     };
     let body = match &units[i] {
@@ -420,7 +446,7 @@ fn block_estimate(
         "paragraph" => match lone_image(&b.inlines).and_then(|i| images.get(i.url.as_deref()?)) {
             Some(img) => {
                 let (w, h) = (img.width() as f32, img.height() as f32);
-                let width = image_width(w, t.measure);
+                let width = image_width(w, t.room);
                 width * h / w.max(1.) + 40.
             }
             None => text(plain_len(&b.inlines), t.size, t.line),
@@ -442,6 +468,7 @@ fn block_estimate(
             })
             .sum(),
         "thematic_break" => 30.,
+        "math" => text(math_text(b).chars().count(), (t.size * 1.15).round(), 1.5) + 8.,
         "code" if is_mermaid(b) => {
             let d = diagram::diagram(code_source(b));
             let body = match diagram::size(&d) {
@@ -499,7 +526,8 @@ fn block_texts(b: &BlockIr, out: &mut Vec<String>) {
                 out.extend(chunks(code_source(b)));
             }
         }
-        "code" | "math" => out.extend(chunks(code_source(b))),
+        "math" => out.push(math_text(b)),
+        "code" => out.extend(chunks(code_source(b))),
         "table" => table_texts(b, 0..b.rows.len(), true, out),
         "html" => out.push(clip(b.raw.as_deref().unwrap_or("").trim(), TEXT_LIMIT).to_owned()),
         _ => {}
@@ -568,8 +596,24 @@ fn block_element(block: &BlockIr, ctx: &Ctx, depth: usize) -> Element<App> {
                 .into()
         }
         "code" if is_mermaid(block) => diagram_card(block, ctx),
+        "math" => {
+            let shown = math_text(block);
+            let size = (t.size * 1.15).round();
+            vstack![
+                marked(&shown, vec![(shown.len(), None)], ctx)
+                    .key(format!("{key}-math"))
+                    .font_size(size)
+                    .line_height(1.5)
+                    .italic(true)
+                    .text_align(TextAlign::Center)
+            ]
+            .key(key)
+            .align(Align::Center)
+            .padding(4., Edge::Vertical)
+            .into()
+        }
         // Nested code (inside lists and quotes) renders whole.
-        "code" | "math" => code_whole(block, ctx),
+        "code" => code_whole(block, ctx),
         "table" => table_part(block, 0..block.rows.len(), true, true, ctx),
         "footnote_definition" => {
             let children: Vec<Element<App>> = block
@@ -730,21 +774,23 @@ fn diagram_card(block: &BlockIr, ctx: &Ctx) -> Element<App> {
         .into();
     }
     let s = diagram_scale(&d, t);
-    vstack![
-        code_header(block, ctx),
-        hstack![diagram::view(&d, s, &t.code_family, t.code_size())]
-            .key(format!("{key}-drawing"))
-            .justify(Justify::Center)
-            .padding(DIAGRAM_PAD, Edge::All)
-            .clip_contents(true),
-    ]
-    .key(key)
-    .background(ColorToken::Base200)
-    .border_color(ColorToken::Border)
-    .border_width(1.)
-    .rounded(10.)
-    .clip_contents(true)
-    .into()
+    let mut drawing = hstack![diagram::view(&d, s, &t.code_family, t.code_size())]
+        .key(format!("{key}-drawing"))
+        .justify(Justify::Center)
+        .padding(DIAGRAM_PAD, Edge::All)
+        .clip_contents(true);
+    // Shrunk as far as it reads well and still wider than the page: scroll.
+    if diagram::size(&d).is_some_and(|[w, _]| w * s > t.room - 2. * DIAGRAM_PAD - 2.) {
+        drawing = drawing.justify(Justify::Start).scroll(Scroll::Horizontal);
+    }
+    vstack![code_header(block, ctx), drawing]
+        .key(key)
+        .background(ColorToken::Base200)
+        .border_color(ColorToken::Border)
+        .border_width(1.)
+        .rounded(10.)
+        .clip_contents(true)
+        .into()
 }
 
 /// A code block's header: its language and a Copy button.
@@ -980,15 +1026,23 @@ fn table_part(
         (false, true) => Sides::BOTTOM | Sides::LEFT | Sides::RIGHT,
         (false, false) => Sides::LEFT | Sides::RIGHT,
     };
-    grid(cells)
+    let table = grid(cells)
         .columns(columns as u16)
         .key(format!("{}-rows-{}", key_of(&table.id), rows.start))
         .border_sides(sides)
         .border_color(ColorToken::Border)
         .border_width(1.)
         .rounded_on(10., corners(first, last))
-        .clip_contents(true)
-        .into()
+        .clip_contents(true);
+    // Too many columns for the page: keep words whole and scroll sideways.
+    let least = columns as f32 * MIN_COLUMN;
+    if least > ctx.typo.room {
+        return hstack![table.width(least).flex(0.)]
+            .key(format!("{table_key}-scroll-{}", rows.start))
+            .scroll(Scroll::Horizontal)
+            .into();
+    }
+    table.into()
 }
 
 /// Retina screenshots are usually 2x: show them at their point size.
@@ -1002,7 +1056,7 @@ fn image_block(image: &InlineIr, key: String, ctx: &Ctx) -> Element<App> {
     match ctx.images.get(url) {
         Some(img) => {
             let (w, h) = (img.width() as f32, img.height() as f32);
-            let width = image_width(w, ctx.typo.measure);
+            let width = image_width(w, ctx.typo.room);
             let mut parts: Vec<Element<App>> = vec![
                 vstack![]
                     .width(width)
@@ -1168,7 +1222,7 @@ fn collect<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String,
         let text = inline.text.as_deref().unwrap_or("");
         match inline.kind.as_str() {
             // Soft line breaks inside a paragraph are spaces.
-            "text" => out.push((text.replace('\n', " "), style)),
+            "text" => out.push((expand_emoji_text(&text.replace('\n', " ")), style)),
             "strong" => collect(
                 &inline.children,
                 Style {
@@ -1202,7 +1256,14 @@ fn collect<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String,
                 out,
             ),
             // Narrow no-break spaces pad the code background on both sides.
-            "code" | "math" => out.push((
+            "math" => out.push((
+                to_unicode(text),
+                Style {
+                    italic: true,
+                    ..style
+                },
+            )),
+            "code" => out.push((
                 format!("\u{202F}{text}\u{202F}"),
                 Style {
                     code: true,
@@ -1400,6 +1461,8 @@ mod tests {
                 size: 16.,
                 line: 1.6,
                 measure: 700.,
+                room: 700.,
+                margin: 56.,
                 family: "SF".into(),
                 code_family: "SF Mono".into(),
             },

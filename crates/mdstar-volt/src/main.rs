@@ -440,7 +440,10 @@ fn settle(
         let selections = runtime
             .dispatch_editor_selections(handlers, app)
             .map_err(|e| e.to_string())?;
-        if !windows && !selections {
+        let widths = runtime
+            .dispatch_widths(handlers, app)
+            .map_err(|e| e.to_string())?;
+        if !windows && !selections && !widths {
             break;
         }
         let (doc, next) = view::view(app)
@@ -615,6 +618,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use app::{LinkAction, link_action};
+
+    #[test]
+    fn narrow_panes_tighten_margins_and_fit_diagrams() {
+        let mut app = App::new(Settings::default(), None);
+        let wide = view::typography(&app);
+        assert_eq!(
+            (wide.room, wide.margin),
+            (wide.measure, 56.),
+            "unknown width: the measure"
+        );
+        app.page_width = Some(500.);
+        let narrow = view::typography(&app);
+        assert_eq!(narrow.margin, 18.);
+        assert_eq!(narrow.room, 500. - 36.);
+        let flow = diagram::diagram(
+            "flowchart LR\n  A[Alpha] --> B[Bravo] --> C[Charlie] --> D[Delta] --> E[Echo]",
+        );
+        let s = diagram::scale(&flow, 16., 300.);
+        let [w, _] = diagram::size(&flow).unwrap();
+        assert!(
+            w > 300. && s >= diagram::MIN_SCALE,
+            "too wide to fit: shrinks to the minimum, then scrolls"
+        );
+        assert!(
+            (diagram::scale(&flow, 16., w * 0.9) * w - w * 0.9).abs() < 1.,
+            "fits when it can"
+        );
+    }
 
     #[test]
     fn commands_and_menus_are_valid() {

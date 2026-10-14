@@ -123,11 +123,15 @@ pub fn size(d: &Diagram) -> Option<[f32; 2]> {
     }
 }
 
+/// The smallest scale a diagram shrinks to: its 11 px labels stay at the
+/// 8 px the kit allows and still read. Wider diagrams scroll instead.
+pub const MIN_SCALE: f32 = 0.75;
+
 /// The scale a diagram is drawn at: the reading size, shrunk to fit `room`.
 pub fn scale(d: &Diagram, body: f32, room: f32) -> f32 {
     let z = (body / 16.).clamp(0.8, 1.4);
     match size(d) {
-        Some([w, _]) if w * z > room => (room / w).max(0.5),
+        Some([w, _]) if w * z > room => (room / w).max(MIN_SCALE),
         _ => z,
     }
 }
@@ -1356,6 +1360,7 @@ fn label_at(
     line: f32,
     color: Option<&str>,
 ) -> Element<App> {
+    let size = size.max(8.);
     let mut t = text(lines.join("\n"))
         .font_size(size)
         .line_height(line / size)

@@ -162,6 +162,9 @@ pub struct App {
     pub window: Range<usize>,
     pub first_visible: usize,
     pub jump: (usize, u32),
+    /// The document pane's laid-out width, once known: diagrams and images
+    /// fit the room the page really has.
+    pub page_width: Option<f32>,
     /// Bumped per shown document so row measurements start fresh.
     pub generation: u64,
     pub back: Vec<PathBuf>,

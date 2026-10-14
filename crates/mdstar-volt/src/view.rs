@@ -1316,10 +1316,17 @@ pub fn typography(app: &App) -> Typography {
         .doc
         .as_ref()
         .is_some_and(|d| matches!(d.kind, FileKind::Code(_)));
+    let measure = if wide { 1800. } else { app.settings.width };
+    let margin = render::margin_x(app.page_width);
     Typography {
         size: app.settings.font_size,
         line: app.settings.line_height,
-        measure: if wide { 1800. } else { app.settings.width },
+        measure,
+        // The page's text column: the measure, or less in a narrow pane.
+        room: app
+            .page_width
+            .map_or(measure, |w| (w - 2. * margin).clamp(160., measure)),
+        margin,
         family: app.settings.body_family(),
         code_family: app.settings.code_family(),
     }
@@ -1356,7 +1363,7 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
         .map(|i| render::estimate(&units, i, &doc.images, &ctx.typo))
         .collect();
     let family = ctx.typo.family.clone();
-    lazy_list(units.len(), |i| render::row(&units, i, &ctx))
+    let list = lazy_list(units.len(), |i| render::row(&units, i, &ctx))
         .key("document")
         .estimates(estimates)
         .window(within(&app.window, units.len()))
@@ -1382,7 +1389,13 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
         // Rendered text can be selected and copied (⌘C, ⌘A, right-click).
         .selectable(true)
         .on_select_text(App::text_selected)
+        .flex(1.);
+    // The pane reports its width so wide content fits the room it has.
+    vstack![list]
+        .key("document-pane")
+        .align(Align::Stretch)
         .flex(1.)
+        .on_width(|app: &mut App, width| app.page_width = Some(width))
         .into()
 }
 
