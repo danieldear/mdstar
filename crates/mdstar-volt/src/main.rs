@@ -508,13 +508,26 @@ fn snapshot(
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// Errors print as a plain line (not Rust's `Error: "…"`) and exit with 1.
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("MD Star: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     if cli::invoked_as_md(std::env::args_os().next().as_deref()) {
         cli::main();
     }
     let args = args()?;
     if let Some(out) = &args.pdf {
         let file = args.files.first().ok_or("--pdf needs a file to export")?;
+        // Name the file in full, so "not found" says where it looked.
+        let file = &std::path::absolute(file)?;
         let options = export::Options {
             dark: matches!(args.appearance, Some(Appearance::Dark)),
             ..export::Options::default()
