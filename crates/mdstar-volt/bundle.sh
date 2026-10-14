@@ -88,6 +88,29 @@ cat > "$APP/Contents/Info.plist" <<PLIST
         <string>public.source-code</string>
         <string>public.log</string>
         <string>public.html</string>
+        <string>public.toml</string>
+        <string>com.microsoft.ini</string>
+      </array>
+    </dict>
+    <!-- Extensions with no system type (macOS gives them dynamic types),
+         claimed by name. A separate entry: with content types present,
+         Launch Services would ignore the extension list. -->
+    <dict>
+      <key>CFBundleTypeName</key><string>Markdown Document</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+      <key>LSHandlerRank</key><string>Default</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>mdown</string><string>mkd</string><string>mkdn</string><string>mdx</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Configuration File</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>env</string><string>lock</string><string>json5</string><string>jsonc</string>
+        <string>conf</string><string>cfg</string><string>properties</string>
       </array>
     </dict>
     <dict>
