@@ -6,6 +6,7 @@
 //! ```
 
 mod app;
+mod cli;
 mod compose;
 mod find;
 mod highlight;
@@ -62,7 +63,11 @@ fn commands() -> CommandRegistry<App> {
     for (n, (id, key)) in TAB_KEYS.into_iter().enumerate() {
         registry = registry.command(
             Command::new(id, format!("Show Tab {}", n + 1), move |app: &mut App| {
-                let i = if n == 8 { app.tabs.len().saturating_sub(1) } else { n };
+                let i = if n == 8 {
+                    app.tabs.len().saturating_sub(1)
+                } else {
+                    n
+                };
                 app.switch_tab(i);
             })
             .shortcut(primary(key))
@@ -84,13 +89,17 @@ fn commands() -> CommandRegistry<App> {
         ))
         .command(Command::new("new-tab", "New Tab", App::new_tab).shortcut(primary('t')))
         .command(
-            Command::new("close-tab", "Close Tab", |app: &mut App| app.close_tab(app.active))
-                .shortcut(primary('w')),
+            Command::new("close-tab", "Close Tab", |app: &mut App| {
+                app.close_tab(app.active)
+            })
+            .shortcut(primary('w')),
         )
         .command(
-            Command::new("next-tab", "Show Next Tab", |app: &mut App| app.cycle_tab(1))
-                .shortcut(primary(']').shift(true))
-                .enabled_when(|app: &App| app.tabs.len() > 1),
+            Command::new("next-tab", "Show Next Tab", |app: &mut App| {
+                app.cycle_tab(1)
+            })
+            .shortcut(primary(']').shift(true))
+            .enabled_when(|app: &App| app.tabs.len() > 1),
         )
         .command(
             Command::new("previous-tab", "Show Previous Tab", |app: &mut App| {
@@ -107,19 +116,25 @@ fn commands() -> CommandRegistry<App> {
             .enabled_when(|app: &App| app.doc.as_ref().is_some_and(|d| d.dirty())),
         )
         .command(
-            Command::new("bold", "Bold", |app: &mut App| app.wrap_selection("**", "**"))
-                .shortcut(primary('b'))
-                .enabled_when(App::editing),
+            Command::new("bold", "Bold", |app: &mut App| {
+                app.wrap_selection("**", "**")
+            })
+            .shortcut(primary('b'))
+            .enabled_when(App::editing),
         )
         .command(
-            Command::new("italic", "Italic", |app: &mut App| app.wrap_selection("_", "_"))
-                .shortcut(primary('i'))
-                .enabled_when(App::editing),
+            Command::new("italic", "Italic", |app: &mut App| {
+                app.wrap_selection("_", "_")
+            })
+            .shortcut(primary('i'))
+            .enabled_when(App::editing),
         )
         .command(
-            Command::new("inline-code", "Code", |app: &mut App| app.wrap_selection("`", "`"))
-                .shortcut(primary('e').shift(true))
-                .enabled_when(App::editing),
+            Command::new("inline-code", "Code", |app: &mut App| {
+                app.wrap_selection("`", "`")
+            })
+            .shortcut(primary('e').shift(true))
+            .enabled_when(App::editing),
         )
         .command(
             Command::new("link", "Link", App::insert_link)
@@ -137,8 +152,10 @@ fn commands() -> CommandRegistry<App> {
                 .enabled_when(|app: &App| app.doc.as_ref().is_some_and(|d| d.editable())),
         )
         .command(
-            Command::new("mode-preview", "Preview", |app: &mut App| app.set_mode(Mode::Preview))
-                .enabled_when(has_doc),
+            Command::new("mode-preview", "Preview", |app: &mut App| {
+                app.set_mode(Mode::Preview)
+            })
+            .enabled_when(has_doc),
         )
         .command(
             Command::new("mode-split", "Edit with Preview", |app: &mut App| {
@@ -163,9 +180,11 @@ fn commands() -> CommandRegistry<App> {
                 .enabled_when(has_doc),
         )
         .command(
-            Command::new("find-next", "Find Next", |app: &mut App| app.find_step(true))
-                .shortcut(primary('g'))
-                .enabled_when(|app: &App| app.find.as_ref().is_some_and(|f| !f.hits.is_empty())),
+            Command::new("find-next", "Find Next", |app: &mut App| {
+                app.find_step(true)
+            })
+            .shortcut(primary('g'))
+            .enabled_when(|app: &App| app.find.as_ref().is_some_and(|f| !f.hits.is_empty())),
         )
         .command(
             Command::new("find-previous", "Find Previous", |app: &mut App| {
@@ -175,8 +194,7 @@ fn commands() -> CommandRegistry<App> {
             .enabled_when(|app: &App| app.find.as_ref().is_some_and(|f| !f.hits.is_empty())),
         )
         .command(
-            Command::new("sidebar", "Toggle Sidebar", App::toggle_sidebar)
-                .shortcut(primary('\\')),
+            Command::new("sidebar", "Toggle Sidebar", App::toggle_sidebar).shortcut(primary('\\')),
         )
         .command(
             Command::new("files", "Show Files", |app: &mut App| {
@@ -423,7 +441,10 @@ fn settle(
         if !windows && !selections {
             break;
         }
-        let (doc, next) = view::view(app).build().map_err(|e| e.to_string())?.into_parts();
+        let (doc, next) = view::view(app)
+            .build()
+            .map_err(|e| e.to_string())?
+            .into_parts();
         runtime
             .replace_document(doc, &next, &Bindings::default())
             .map_err(|e| e.to_string())?;
@@ -442,8 +463,12 @@ fn snapshot(
     select_all: bool,
     hover: Option<&str>,
 ) -> Result<(), String> {
-    let (doc, mut handlers) = view::view(app).build().map_err(|e| e.to_string())?.into_parts();
-    let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).map_err(|e| e.to_string())?;
+    let (doc, mut handlers) = view::view(app)
+        .build()
+        .map_err(|e| e.to_string())?
+        .into_parts();
+    let mut runtime =
+        Runtime::new(doc, &handlers, &Bindings::default()).map_err(|e| e.to_string())?;
     let viewport = volt_ui_kit::Viewport::new(size[0] * scale, size[1] * scale, scale)
         .ok_or("invalid snapshot size")?;
     let mut painter = RasterPainter::new(viewport);
@@ -479,16 +504,32 @@ fn snapshot(
         Err(_) => painter.rasterize(&batches, clear)?,
     };
     pixmap.save_png(path).map_err(|e| e.to_string())?;
-    println!("Rendered {} elements to {}", runtime.boxes().len(), path.display());
+    println!(
+        "Rendered {} elements to {}",
+        runtime.boxes().len(),
+        path.display()
+    );
     Ok(())
 }
 
+/// The app's bundle identifier, from `[package.metadata.volt.bundle]`.
+const BUNDLE_ID: &str = "dev.mdstar.volt";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if cli::invoked_as_md(std::env::args_os().next().as_deref()) {
+        cli::main();
+    }
     let args = args()?;
     let snapshot_path = args.snapshot.clone();
     // Snapshots never read or write the user's settings.
-    let settings_path = snapshot_path.is_none().then(settings::settings_path).flatten();
-    let mut settings = settings_path.as_deref().map(Settings::load).unwrap_or_default();
+    let settings_path = snapshot_path
+        .is_none()
+        .then(settings::settings_path)
+        .flatten();
+    let mut settings = settings_path
+        .as_deref()
+        .map(Settings::load)
+        .unwrap_or_default();
     if let Some(appearance) = args.appearance {
         settings.appearance = appearance;
     }
@@ -517,7 +558,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if args.slash {
             app.set_mode(Mode::Split);
-            let text = app.doc.as_ref().map(|d| format!("{}\n/", d.source.trim_end()));
+            let text = app
+                .doc
+                .as_ref()
+                .map(|d| format!("{}\n/", d.source.trim_end()));
             if let Some(text) = text {
                 let end = text.len();
                 app.edit(text);
@@ -593,7 +637,10 @@ mod tests {
     #[test]
     fn links_resolve_to_anchors_documents_or_safe_external_targets() {
         let here = Some(Path::new("/docs/guide/intro.md"));
-        assert_eq!(link_action("#Install", here), LinkAction::Anchor("install".into()));
+        assert_eq!(
+            link_action("#Install", here),
+            LinkAction::Anchor("install".into())
+        );
         assert_eq!(
             link_action("setup.md#First-Run", here),
             LinkAction::Document("/docs/guide/setup.md".into(), Some("first-run".into()))
@@ -613,7 +660,11 @@ mod tests {
             "notes.pdf",
             "",
         ] {
-            assert_eq!(link_action(unsafe_target, here), LinkAction::Ignore, "{unsafe_target}");
+            assert_eq!(
+                link_action(unsafe_target, here),
+                LinkAction::Ignore,
+                "{unsafe_target}"
+            );
         }
     }
 
@@ -657,7 +708,10 @@ mod tests {
         app.jump_to(rows - 1);
         let (runtime, _) = settle_view(&mut app);
         assert_eq!(app.window.end, rows, "window {:?}", app.window);
-        assert!(runtime.boxes().iter().any(|b| b.id == last), "the last row {last} is built");
+        assert!(
+            runtime.boxes().iter().any(|b| b.id == last),
+            "the last row {last} is built"
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -681,7 +735,11 @@ mod tests {
         let target = find.current_hit().unwrap().row;
         assert!(target >= 400);
         let (runtime, _) = settle_view(&mut app);
-        assert!(app.window.contains(&target), "{:?} holds {target}", app.window);
+        assert!(
+            app.window.contains(&target),
+            "{:?} holds {target}",
+            app.window
+        );
         assert!(runtime.boxes().iter().any(|b| b.id == "find-field"));
         app.find_step(true);
         assert_eq!(app.find.as_ref().unwrap().summary(), "2 of 2");
@@ -694,14 +752,24 @@ mod tests {
     /// markers, and reaches the app (for Copy, Look Up, Share…).
     #[test]
     fn rendered_text_selects_across_blocks_and_reports_it() {
-        let (dir, file) = temp_doc("select", "# Title\n\nFirst paragraph here.\n\n- one item\n- two item\n");
+        let (dir, file) = temp_doc(
+            "select",
+            "# Title\n\nFirst paragraph here.\n\n- one item\n- two item\n",
+        );
         let mut app = App::new(Settings::default(), None);
         app.open(file);
         let viewport = volt_ui_kit::Viewport::new(1000., 800., 1.).unwrap();
         let mut metrics = RasterPainter::new(viewport);
         let (doc, mut handlers) = view::view(&app).build().unwrap().into_parts();
         let mut runtime = Runtime::new(doc, &handlers, &Bindings::default()).unwrap();
-        settle(&mut runtime, &mut handlers, &mut app, viewport, &mut metrics).unwrap();
+        settle(
+            &mut runtime,
+            &mut handlers,
+            &mut app,
+            viewport,
+            &mut metrics,
+        )
+        .unwrap();
         let find = |runtime: &Runtime, needle: &str| {
             runtime
                 .boxes()
@@ -713,13 +781,34 @@ mod tests {
         };
         let first = find(&runtime, "First");
         let item = find(&runtime, "two item");
-        assert!(runtime.text_select_press(first[0] + 1., first[1] + first[3] / 2., 1, false, &mut metrics));
-        assert!(runtime.text_select_drag(item[0] + item[2] - 1., item[1] + item[3] / 2., &mut metrics));
+        assert!(runtime.text_select_press(
+            first[0] + 1.,
+            first[1] + first[3] / 2.,
+            1,
+            false,
+            &mut metrics
+        ));
+        assert!(runtime.text_select_drag(
+            item[0] + item[2] - 1.,
+            item[1] + item[3] / 2.,
+            &mut metrics
+        ));
         runtime.text_select_release();
-        runtime.dispatch_text_selection(&mut handlers, &mut app).unwrap();
-        assert_eq!(app.selected_text, "First paragraph here.\none item\ntwo item");
+        runtime
+            .dispatch_text_selection(&mut handlers, &mut app)
+            .unwrap();
+        assert_eq!(
+            app.selected_text,
+            "First paragraph here.\none item\ntwo item"
+        );
         // A double-click picks one word.
-        runtime.text_select_press(first[0] + 60., first[1] + first[3] / 2., 2, false, &mut metrics);
+        runtime.text_select_press(
+            first[0] + 60.,
+            first[1] + first[3] / 2.,
+            2,
+            false,
+            &mut metrics,
+        );
         runtime.text_select_release();
         assert_eq!(runtime.selected_text(), Some("paragraph"));
         std::fs::remove_dir_all(dir).ok();
@@ -728,7 +817,10 @@ mod tests {
     #[test]
     fn every_markdown_fixture_builds_with_every_panel_and_theme() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let mut files = vec![root.join("README.md"), root.join("tests/fixtures/sample.md")];
+        let mut files = vec![
+            root.join("README.md"),
+            root.join("tests/fixtures/sample.md"),
+        ];
         if let Ok(dir) = std::fs::read_dir(root.join("docs")) {
             files.extend(
                 dir.filter_map(Result::ok)

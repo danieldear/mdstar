@@ -11,6 +11,19 @@ workspace:
 cargo run --release -- README.md      # a file, or a folder to browse
 ```
 
+## Command line
+
+The app bundle also carries `md`, the terminal viewer and live-preview
+editor: `Contents/MacOS/md` links to the app's executable, which runs the
+terminal viewer instead of opening a window when started under that name.
+
+```sh
+ln -sf "/Applications/MD Star.app/Contents/MacOS/md" ~/.local/bin/md   # or ../../install.sh --link-app
+md README.md              # view; e edits with live preview, q quits
+md --plain README.md      # print the rendered document
+md --app README.md        # open it in the app
+```
+
 ## Packaging
 
 The app bundle, its document types and its signing are described in

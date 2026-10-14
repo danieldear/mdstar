@@ -25,6 +25,8 @@ minimum-system-version = "13.0"
 category = "public.app-category.productivity"
 copyright = "MD Star contributors. MIT OR Apache-2.0."
 notary-profile = "mdstar"
+# The terminal viewer: Contents/MacOS/md runs `md` (see src/cli.rs).
+aliases = ["md"]
 
 # Markdown is ours by default.
 [[package.metadata.volt.bundle.document-types]]
@@ -67,6 +69,14 @@ content-types = ["public.folder"]
 
 [dependencies]
 mdstar-core = { path = "../mdstar-core" }
+mdstar-render-terminal = { path = "../mdstar-render-terminal" }
+anyhow = "1.0.100"
+clap = { version = "4.5.40", features = ["derive"] }
+shell-words = "1.1.0"
+crossterm = "0.29.0"
+ratatui = "0.30.0"
+ansi-to-tui = "8.0.1"
+ratatui-textarea = "0.9.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 notify = "6"
