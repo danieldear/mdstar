@@ -582,18 +582,21 @@ fn side_hint(key: &str, message: &str) -> Element<App> {
 fn files(app: &App) -> Element<App> {
     let rows = workspace::rows(&app.tree, &app.expanded, &app.filter);
     if app.tree.is_empty() {
+        // The hint and its button sit together near the top of the list.
         return vstack![
-            side_hint(
-                "files-empty",
-                "Open a folder to browse its documents here."
-            ),
+            text("Open a folder to browse its documents here.")
+                .font_size(12.5)
+                .color(Role::Muted)
+                .text_align(TextAlign::Center),
             button("Open Folder…")
                 .key("add-folder")
                 .size(ControlSize::Small)
                 .on_click(App::choose_folder),
         ]
         .key("files")
+        .gap(12., Axis::Vertical)
         .align(Align::Center)
+        .padding(20., Edge::All)
         .flex(1.)
         .into();
     }
@@ -1359,7 +1362,7 @@ fn welcome(app: &App) -> Element<App> {
                 .description(".md, .markdown or .txt")
                 .accept(MARKDOWN)
                 .multiple(false)
-                .height(120.)
+                .height(150.)
                 .on_drop(|app: &mut App, paths| {
                     if let Some(path) = paths.into_iter().next() {
                         app.visit(path);
