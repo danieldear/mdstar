@@ -16,6 +16,7 @@ use volt_ui_kit::{graphics::Image, ui::prelude::*};
 
 use crate::{
     App,
+    diagram::{self, Diagram},
     find::Hit,
     highlight::{self, Token},
 };
@@ -26,6 +27,8 @@ const TEXT_LIMIT: usize = 8000;
 const TABLE_ROWS: usize = 40;
 const CODE_LINES: usize = 80;
 const CODE_HEADER: f32 = 34.;
+/// Space around a drawn diagram inside its card.
+const DIAGRAM_PAD: f32 = 18.;
 /// Heading sizes relative to the body size, H1 to H6.
 const HEADING_SCALE: [f32; 6] = [2.0, 1.5, 1.25, 1.1, 1.0, 0.9];
 /// Space above each heading level, in body sizes.
@@ -164,6 +167,7 @@ impl Unit<'_> {
     pub fn code(&self) -> Option<&BlockIr> {
         match self {
             Unit::Code { block, .. } => Some(block),
+            Unit::Block(b) if is_mermaid(b) => Some(b),
             _ => None,
         }
     }
@@ -201,6 +205,7 @@ pub fn units(blocks: &[BlockIr]) -> Vec<Unit<'_>> {
                     start = end;
                 }
             }
+            "code" if is_mermaid(block) => out.push(Unit::Block(block)),
             "code" | "math" => {
                 let parts = chunks(code_source(block));
                 let count = parts.len();
@@ -221,6 +226,20 @@ pub fn units(blocks: &[BlockIr]) -> Vec<Unit<'_>> {
         }
     }
     out
+}
+
+/// A fenced Mermaid block, drawn as a diagram.
+fn is_mermaid(block: &BlockIr) -> bool {
+    block.kind == "code"
+        && block
+            .language
+            .as_deref()
+            .is_some_and(|l| l.eq_ignore_ascii_case("mermaid"))
+}
+
+/// The scale a Mermaid block is drawn at on this page.
+fn diagram_scale(d: &Diagram, t: &Typography) -> f32 {
+    diagram::scale(d, t.size, t.measure - 2. * DIAGRAM_PAD - 2.)
 }
 
 fn code_source(block: &BlockIr) -> &str {
@@ -406,7 +425,7 @@ fn block_estimate(
             }
             None => text(plain_len(&b.inlines), t.size, t.line),
         },
-        "blockquote" => b
+        "blockquote" | "footnote_definition" => b
             .children
             .iter()
             .map(|c| block_estimate(c, images, text, t) + 10.)
@@ -423,6 +442,14 @@ fn block_estimate(
             })
             .sum(),
         "thematic_break" => 30.,
+        "code" if is_mermaid(b) => {
+            let d = diagram::diagram(code_source(b));
+            let body = match diagram::size(&d) {
+                Some([_, h]) => h * diagram_scale(&d, t),
+                None => code_source(b).lines().count().max(1) as f32 * t.code_line(),
+            };
+            body + CODE_HEADER + 2. * DIAGRAM_PAD
+        }
         _ => text(b.raw.as_deref().map_or(40, str::len), 12., 1.4),
     }
 }
@@ -460,12 +487,18 @@ fn block_texts(b: &BlockIr, out: &mut Vec<String>) {
                 out.push(inline_text(&b.inlines));
             }
         }
-        "blockquote" => b.children.iter().for_each(|c| block_texts(c, out)),
+        "blockquote" | "footnote_definition" => b.children.iter().for_each(|c| block_texts(c, out)),
         "list" => b
             .items
             .iter()
             .flat_map(|i| &i.children)
             .for_each(|c| block_texts(c, out)),
+        // Drawn diagrams have no searchable text; ones that fail show code.
+        "code" if is_mermaid(b) => {
+            if let Diagram::Error(_) = *diagram::diagram(code_source(b)) {
+                out.extend(chunks(code_source(b)));
+            }
+        }
         "code" | "math" => out.extend(chunks(code_source(b))),
         "table" => table_texts(b, 0..b.rows.len(), true, out),
         "html" => out.push(clip(b.raw.as_deref().unwrap_or("").trim(), TEXT_LIMIT).to_owned()),
@@ -534,23 +567,29 @@ fn block_element(block: &BlockIr, ctx: &Ctx, depth: usize) -> Element<App> {
                 .gap((t.size * 0.4).round(), Axis::Vertical)
                 .into()
         }
+        "code" if is_mermaid(block) => diagram_card(block, ctx),
         // Nested code (inside lists and quotes) renders whole.
-        "code" | "math" => {
-            let parts = chunks(code_source(block));
-            let count = parts.len();
-            let mut first_line = 1;
-            let parts: Vec<Element<App>> = parts
-                .iter()
-                .enumerate()
-                .map(|(i, text)| {
-                    let part = code_part(block, text, i, i + 1 == count, first_line, ctx);
-                    first_line += text.split('\n').count();
-                    part
-                })
-                .collect();
-            vstack(parts).key(key).into()
-        }
+        "code" | "math" => code_whole(block, ctx),
         "table" => table_part(block, 0..block.rows.len(), true, true, ctx),
+        "footnote_definition" => {
+            let children: Vec<Element<App>> = block
+                .children
+                .iter()
+                .map(|b| block_element(b, ctx, depth + 1))
+                .collect();
+            hstack![
+                text(footnote_mark(block.label.as_deref().unwrap_or("")))
+                    .color(ColorToken::Primary)
+                    .selectable(false)
+                    .width(t.gutter())
+                    .flex(0.),
+                vstack(children).gap(t.gap() * 0.4, Axis::Vertical).flex(1.),
+            ]
+            .key(key)
+            .align(Align::Start)
+            .color(ColorToken::Muted)
+            .into()
+        }
         "thematic_break" => vstack![divider().background(ColorToken::Border)]
             .key(key)
             .padding(t.size * 0.9, Edge::Vertical)
@@ -655,6 +694,100 @@ fn task_box(done: bool) -> Element<App> {
 
 /// One part of a code block. The first part carries the language and a
 /// Copy button for the whole block; parts join into one rounded frame.
+/// A whole code block in one element.
+fn code_whole(block: &BlockIr, ctx: &Ctx) -> Element<App> {
+    let parts = chunks(code_source(block));
+    let count = parts.len();
+    let mut first_line = 1;
+    let parts: Vec<Element<App>> = parts
+        .iter()
+        .enumerate()
+        .map(|(i, text)| {
+            let part = code_part(block, text, i, i + 1 == count, first_line, ctx);
+            first_line += text.split('\n').count();
+            part
+        })
+        .collect();
+    vstack(parts).key(key_of(&block.id)).into()
+}
+
+/// A Mermaid block as a diagram in a code-style card, or as code with a
+/// note when it cannot be drawn.
+fn diagram_card(block: &BlockIr, ctx: &Ctx) -> Element<App> {
+    let key = key_of(&block.id);
+    let t = &ctx.typo;
+    let d = diagram::diagram(code_source(block));
+    if let Diagram::Error(e) = &*d {
+        return vstack![
+            code_whole(block, ctx),
+            text(format!("This Mermaid diagram could not be drawn: {e}"))
+                .font_size(12.)
+                .color(ColorToken::Muted)
+                .selectable(false),
+        ]
+        .key(format!("{key}-diagram"))
+        .gap(6., Axis::Vertical)
+        .into();
+    }
+    let s = diagram_scale(&d, t);
+    vstack![
+        code_header(block, ctx),
+        hstack![diagram::view(&d, s, &t.code_family, t.code_size())]
+            .key(format!("{key}-drawing"))
+            .justify(Justify::Center)
+            .padding(DIAGRAM_PAD, Edge::All)
+            .clip_contents(true),
+    ]
+    .key(key)
+    .background(ColorToken::Base200)
+    .border_color(ColorToken::Border)
+    .border_width(1.)
+    .rounded(10.)
+    .clip_contents(true)
+    .into()
+}
+
+/// A code block's header: its language and a Copy button.
+fn code_header(block: &BlockIr, ctx: &Ctx) -> Element<App> {
+    let key = key_of(&block.id);
+    let copied = ctx.copied == Some(key.as_str());
+    let id = key.clone();
+    let source = code_source(block).to_owned();
+    let language = if block.kind == "math" {
+        "math"
+    } else {
+        block.language.as_deref().unwrap_or("text")
+    };
+    hstack![
+        text(language.to_uppercase())
+            .font_size(10.5)
+            .font_weight(600)
+            .letter_spacing(0.06)
+            .color(ColorToken::Muted)
+            .selectable(false),
+        spacer(),
+        button(if copied { "Copied" } else { "Copy" })
+            .key(format!("{key}-copy"))
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Small)
+            .font_size(12.)
+            .color(if copied {
+                ColorToken::Success
+            } else {
+                ColorToken::Muted
+            })
+            .on_click(move |app: &mut App| app.copy(&source, Some(id.clone()))),
+    ]
+    .height(CODE_HEADER)
+    .padding(14., Edge::Left)
+    .padding(6., Edge::Right)
+    .align(Align::Center)
+    .border_sides(Sides::BOTTOM)
+    .border_color(ColorToken::Border)
+    .border_width(1.)
+    .into()
+}
+
 fn code_part(
     block: &BlockIr,
     code: &str,
@@ -668,44 +801,7 @@ fn code_part(
     let first = part == 0;
     let mut parts: Vec<Element<App>> = Vec::new();
     if first {
-        let copied = ctx.copied == Some(key.as_str());
-        let id = key.clone();
-        let source = code_source(block).to_owned();
-        let language = if block.kind == "math" {
-            "math"
-        } else {
-            block.language.as_deref().unwrap_or("text")
-        };
-        parts.push(
-            hstack![
-                text(language.to_uppercase())
-                    .font_size(10.5)
-                    .font_weight(600)
-                    .letter_spacing(0.06)
-                    .color(ColorToken::Muted)
-                    .selectable(false),
-                spacer(),
-                button(if copied { "Copied" } else { "Copy" })
-                    .key(format!("{key}-copy"))
-                    .variant(ButtonVariant::Ghost)
-                    .size(ControlSize::Small)
-                    .font_size(12.)
-                    .color(if copied {
-                        ColorToken::Success
-                    } else {
-                        ColorToken::Muted
-                    })
-                    .on_click(move |app: &mut App| app.copy(&source, Some(id.clone()))),
-            ]
-            .height(CODE_HEADER)
-            .padding(14., Edge::Left)
-            .padding(6., Edge::Right)
-            .align(Align::Center)
-            .border_sides(Sides::BOTTOM)
-            .border_color(ColorToken::Border)
-            .border_width(1.)
-            .into(),
-        );
+        parts.push(code_header(block, ctx));
     }
     let code = if code.is_empty() { " " } else { code };
     let language = block
@@ -844,13 +940,20 @@ fn table_part(
     let mut row = |cols: &[Vec<InlineIr>], header: bool, rule: bool, r: usize| {
         for i in 0..columns {
             let inlines = cols.get(i).map(Vec::as_slice).unwrap_or(&[]);
+            let (align, text_align) = match table.align.get(i).map(String::as_str) {
+                Some("right") => (Align::End, TextAlign::End),
+                Some("center") => (Align::Center, TextAlign::Center),
+                _ => (Align::Start, TextAlign::Start),
+            };
             let mut text = paragraph(inlines, size, ctx)
                 .key(format!("{table_key}-cell-{r}-{i}"))
-                .line_height(1.5);
+                .line_height(1.5)
+                .text_align(text_align);
             if header {
                 text = text.font_weight(600);
             }
             let mut cell = vstack![text]
+                .align(align)
                 .padding(14., Edge::Horizontal)
                 .padding(9., Edge::Vertical);
             if rule {
@@ -1107,6 +1210,13 @@ fn collect<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String,
                 },
             )),
             "hard_break" => out.push(("\n".into(), style)),
+            "footnote_reference" => out.push((
+                footnote_mark(text),
+                Style {
+                    color: Some("@primary"),
+                    ..style
+                },
+            )),
             "image" => out.push((
                 format!("[{}]", inline.alt.as_deref().unwrap_or("image")),
                 style,
@@ -1122,6 +1232,19 @@ fn collect<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String,
 }
 
 /// A paragraph that is just one image (ignoring whitespace).
+/// A footnote's mark: superscript digits for numeric labels, else [label].
+fn footnote_mark(label: &str) -> String {
+    const DIGITS: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+    if !label.is_empty() && label.bytes().all(|b| b.is_ascii_digit()) {
+        label
+            .bytes()
+            .map(|b| DIGITS[usize::from(b - b'0')])
+            .collect()
+    } else {
+        format!("[{label}]")
+    }
+}
+
 fn lone_image(inlines: &[InlineIr]) -> Option<&InlineIr> {
     let mut found = None;
     for inline in inlines {

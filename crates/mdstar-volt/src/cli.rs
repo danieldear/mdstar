@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use crate::terminal::{Options as RenderOptions, render as render_markdown};
 use ansi_to_tui::IntoText;
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -21,7 +22,6 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use mdstar_render_terminal::{RenderOptions, render_markdown};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
@@ -246,6 +246,11 @@ fn run(args: Vec<OsString>) -> Result<()> {
     let options = build_render_options(&cli);
 
     if should_use_tui(&cli) {
+        // The viewer's ANSI parser stops at link escapes; links stay styled.
+        let options = RenderOptions {
+            hyperlinks: false,
+            ..options
+        };
         return run_tui(cli.path, options);
     }
 
@@ -260,13 +265,17 @@ fn run(args: Vec<OsString>) -> Result<()> {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn build_render_options(cli: &Cli) -> RenderOptions {
-    let mut opts = RenderOptions::default();
-    if let Some(w) = cli.width {
-        opts.width = w;
+    RenderOptions {
+        // The terminal's width (less the viewer's frame), up to 100 columns.
+        width: cli.width.unwrap_or_else(|| {
+            crossterm::terminal::size()
+                .map(|(columns, _)| usize::from(columns).saturating_sub(4).clamp(40, 100))
+                .unwrap_or(100)
+        }),
+        color: !(cli.no_color || cli.plain),
+        ascii_mermaid: cli.ascii_mermaid,
+        ..RenderOptions::default()
     }
-    opts.color = !(cli.no_color || cli.plain);
-    opts.ascii_mermaid = cli.ascii_mermaid;
-    opts
 }
 
 fn normalize_legacy_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
@@ -276,6 +285,33 @@ fn normalize_legacy_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsStri
         v.remove(1);
     }
     v
+}
+
+#[cfg(test)]
+mod viewer_tests {
+    use ansi_to_tui::IntoText;
+
+    #[test]
+    fn the_viewer_shows_styled_text_without_raw_escapes() {
+        let ansi = crate::terminal::render(
+            "# Title\n\nA [link](https://example.com) and `code`.",
+            crate::terminal::Options {
+                hyperlinks: false,
+                ..Default::default()
+            },
+        );
+        let text = ansi.as_str().into_text().unwrap();
+        let shown: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+            .collect();
+        assert!(shown.contains("A link and code."), "{shown:?}");
+        assert!(
+            !shown.contains('\x1b') && !shown.contains("8;;"),
+            "{shown:?}"
+        );
+    }
 }
 
 fn should_use_tui(cli: &Cli) -> bool {

@@ -8,12 +8,14 @@
 mod app;
 mod cli;
 mod compose;
+mod diagram;
 mod find;
 mod highlight;
 #[cfg(target_os = "macos")]
 mod macos;
 mod render;
 mod settings;
+mod terminal;
 mod view;
 mod workspace;
 

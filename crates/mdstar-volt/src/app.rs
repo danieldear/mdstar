@@ -1682,20 +1682,8 @@ fn build(path: &Path, kind: FileKind, source: String) -> Result<Doc, String> {
 fn block(id: &str, kind: &str) -> BlockIr {
     BlockIr {
         id: id.into(),
-        range: None,
         kind: kind.into(),
-        level: None,
-        inlines: Vec::new(),
-        children: Vec::new(),
-        ordered: None,
-        start: None,
-        items: Vec::new(),
-        language: None,
-        meta: None,
-        code: None,
-        headers: Vec::new(),
-        rows: Vec::new(),
-        raw: None,
+        ..BlockIr::default()
     }
 }
 

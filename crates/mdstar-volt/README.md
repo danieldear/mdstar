@@ -32,9 +32,12 @@ The app bundle, its document types and its signing are described in
 
 ```sh
 cargo volt bundle                         # target/release/bundle/MD Star.app
-cargo volt release --universal --dry-run  # show the release steps
-cargo volt release --universal            # signed, notarized MD-Star-<version>.dmg
+cargo volt release --dry-run              # show the release steps
+cargo volt release                        # signed, notarized MD-Star-<version>.dmg
 ```
+
+Releases are for Apple silicon only: built on an Apple silicon Mac, the app
+holds just the arm64 binary (`--universal` would add Intel and double it).
 
 `cargo volt release` signs with the Developer ID certificate in the keychain
 and notarizes with the `mdstar` keychain profile. Create that profile once:

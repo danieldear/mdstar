@@ -69,7 +69,8 @@ content-types = ["public.folder"]
 
 [dependencies]
 mdstar-core = { path = "../mdstar-core" }
-mdstar-render-terminal = { path = "../mdstar-render-terminal" }
+mermaid-text = "0.16.1"
+unicode-width = "0.2"
 anyhow = "1.0.100"
 clap = { version = "4.5.40", features = ["derive"] }
 shell-words = "1.1.0"
