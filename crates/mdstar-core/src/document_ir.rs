@@ -54,7 +54,7 @@ pub struct DiagnosticIr {
 
 /// A tagged but intentionally flat block shape.  It is straightforward for
 /// Swift Codable to decode, and unknown optional fields are ignored safely.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockIr {
     pub id: String,
     pub range: Option<SourceRange>,
@@ -71,6 +71,12 @@ pub struct BlockIr {
     pub headers: Vec<Vec<InlineIr>>,
     pub rows: Vec<Vec<Vec<InlineIr>>>,
     pub raw: Option<String>,
+    /// Table column alignment: "left", "right", "center" or "" for none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub align: Vec<String>,
+    /// A footnote definition's label (`[^label]: …`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,7 +87,9 @@ pub struct ListItemIr {
     pub children: Vec<BlockIr>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Inline kinds: text, emphasis, strong, delete, code, math, link, image,
+/// html, hard_break and footnote_reference (its label in `text`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InlineIr {
     pub id: String,
     pub range: Option<SourceRange>,
@@ -111,6 +119,8 @@ impl BlockIr {
             headers: Vec::new(),
             rows: Vec::new(),
             raw: None,
+            align: Vec::new(),
+            label: None,
         }
     }
 }
@@ -240,6 +250,19 @@ fn node_to_block_ir(node: &Node, document_id: &str, ids: &mut IdAllocator) -> Op
         }
         Node::Table(table) => {
             let mut block = BlockIr::new(make_id("table", ids), range, "table");
+            block.align = table
+                .align
+                .iter()
+                .map(|a| {
+                    match a {
+                        markdown::mdast::AlignKind::Left => "left",
+                        markdown::mdast::AlignKind::Right => "right",
+                        markdown::mdast::AlignKind::Center => "center",
+                        markdown::mdast::AlignKind::None => "",
+                    }
+                    .to_owned()
+                })
+                .collect();
             for (row_index, row) in table.children.iter().enumerate() {
                 let Node::TableRow(row) = row else { continue };
                 let cells = row
@@ -280,7 +303,21 @@ fn node_to_block_ir(node: &Node, document_id: &str, ids: &mut IdAllocator) -> Op
             block.raw = Some(toml.value.clone());
             Some(block)
         }
-        Node::Definition(_) | Node::FootnoteDefinition(_) => None,
+        Node::FootnoteDefinition(note) => {
+            let mut block = BlockIr::new(
+                make_id("footnote_definition", ids),
+                range,
+                "footnote_definition",
+            );
+            block.label = Some(
+                note.label
+                    .clone()
+                    .unwrap_or_else(|| note.identifier.clone()),
+            );
+            block.children = nodes_to_blocks_ir(&note.children, document_id, ids);
+            Some(block)
+        }
+        Node::Definition(_) => None,
         _ => None,
     }
 }
@@ -379,6 +416,20 @@ fn node_to_inline_ir(node: &Node, document_id: &str, ids: &mut IdAllocator) -> O
             range,
             "hard_break",
         )),
+        Node::FootnoteReference(value) => {
+            let mut inline = InlineIr::new(
+                make_id("footnote_reference", ids),
+                range,
+                "footnote_reference",
+            );
+            inline.text = Some(
+                value
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| value.identifier.clone()),
+            );
+            Some(inline)
+        }
         Node::Paragraph(value) => {
             let mut inline = InlineIr::new(make_id("paragraph", ids), range, "paragraph");
             inline.children = nodes_to_inlines_ir(&value.children, document_id, ids);
@@ -514,6 +565,30 @@ mod tests {
                 .unwrap()
                 .contains("schema_version")
         );
+    }
+
+    #[test]
+    fn footnotes_and_table_alignment_survive() {
+        let ir = parse_document_ir_with_diagnostics(
+            "Text[^note].\n\n| a | b | c |\n|:--|--:|---|\n| 1 | 2 | 3 |\n\n[^note]: The note.\n",
+            "notes.md",
+        )
+        .unwrap();
+        let reference = ir.blocks[0]
+            .inlines
+            .iter()
+            .find(|i| i.kind == "footnote_reference")
+            .expect("reference kept");
+        assert_eq!(reference.text.as_deref(), Some("note"));
+        let table = ir.blocks.iter().find(|b| b.kind == "table").unwrap();
+        assert_eq!(table.align, ["left", "right", ""]);
+        let note = ir
+            .blocks
+            .iter()
+            .find(|b| b.kind == "footnote_definition")
+            .expect("definition kept");
+        assert_eq!(note.label.as_deref(), Some("note"));
+        assert_eq!(note.children[0].kind, "paragraph");
     }
 
     #[test]

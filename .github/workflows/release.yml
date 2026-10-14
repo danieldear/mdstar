@@ -1,95 +1,109 @@
 name: Release
 
+# Push a tag such as v0.1.0 (matching crates/mdstar-volt's version) to build,
+# sign, notarize and staple MD Star and attach its disk image to a draft
+# GitHub release. Run it by hand to build without a release.
 on:
   push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: write
 
-# macOS-only for now. The release ships the native SwiftUI reader as a universal
-# DMG with the `md` CLI embedded in the bundle, plus a standalone `md` archive.
-# Linux and Windows builds are deferred; the `md` binary still links Tauri, so
-# those targets need the GTK/WebKit toolchain and have not been validated here.
-#
-# Signing is optional: set the MACOS_* / NOTARY_* secrets to produce a
-# Gatekeeper-ready build. Without them the DMG is ad-hoc signed, so downloaded
-# copies are quarantined and refuse to launch until the user approves the app in
-# System Settings > Privacy & Security. Publishing an unsigned build gives every
-# recipient that failure on first run.
-
 env:
   CARGO_TERM_COLOR: always
+  VOLT_UI_KIT_REF: a9f6163db29b8ca49e1914dd58dd8e2cef577ed5
+  TEAM_ID: A822K85XUW
 
 jobs:
   macos:
-    name: macOS (universal)
-    # Package.swift requires Swift tools 6.0, and the Liquid Glass path needs
-    # the macOS 26 SDK; older images ship Swift 5.10 and cannot build either.
-    runs-on: macos-26
+    name: macOS (Apple silicon)
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: crates/mdstar-volt
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Select newest Xcode
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
-          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
-          swift --version
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match version ${version} in crates/mdstar-volt/Cargo.toml"
+            exit 1
+          fi
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch Volt UI Kit
+        working-directory: .
+        env:
+          TOKEN: ${{ secrets.VOLT_UI_KIT_TOKEN }}
+        run: |
+          kit="$GITHUB_WORKSPACE/../rust/volt-ui-kit"
+          git clone --filter=blob:none "https://x-access-token:${TOKEN}@github.com/danieldear/volt-ui-kit.git" "$kit"
+          git -C "$kit" checkout --detach "$VOLT_UI_KIT_REF"
+          git -C "$kit" remote set-url origin https://github.com/danieldear/volt-ui-kit.git
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo volt
+        run: cargo install --locked --path "$GITHUB_WORKSPACE/../rust/volt-ui-kit" --features dev-tools --bin cargo-volt
+
+      # A throwaway keychain holds the Developer ID certificate and the
+      # notarization credentials for this run only.
+      - name: Set up signing
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          password=$(openssl rand -hex 24)
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$keychain"
+          xcrun notarytool store-credentials mdstar --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$keychain"
+          echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      - name: Build, sign, notarize and staple
+        run: cargo volt release
+
+      - name: Checksum
+        run: |
+          cd target/release/bundle
+          shasum -a 256 MD-Star-*.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Keep the disk image
+        uses: actions/upload-artifact@v4
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          name: MD-Star-macos
+          path: |
+            crates/mdstar-volt/target/release/bundle/MD-Star-*.dmg
+            crates/mdstar-volt/target/release/bundle/SHA256SUMS.txt
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Import signing certificate
-        if: env.MACOS_CERTIFICATE != ''
+      - name: Draft the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import certificate.p12 -k build.keychain \
-            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          rm certificate.p12
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "MD Star ${GITHUB_REF_NAME#v}" --generate-notes \
+            target/release/bundle/MD-Star-*.dmg target/release/bundle/SHA256SUMS.txt
 
-      - name: Store notarization credentials
-        if: env.NOTARY_APPLE_ID != ''
-        env:
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+      - name: Remove the keychain
+        if: always()
         run: |
-          xcrun notarytool store-credentials mdstar \
-            --apple-id "$NOTARY_APPLE_ID" \
-            --team-id "$NOTARY_TEAM_ID" \
-            --password "$NOTARY_PASSWORD"
-
-      - name: Build native app + DMG installer
-        env:
-          CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          NOTARY_PROFILE: ${{ secrets.NOTARY_APPLE_ID != '' && 'mdstar' || '' }}
-        run: ./script/package_macos.sh --arch universal --dmg
-
-      - name: Package CLI binary
-        run: |
-          BIN="dist/MD Star.app/Contents/MacOS/md"
-          ARCHIVE="md-${{ github.ref_name }}-universal-apple-darwin.tar.gz"
-          tar -czf "$ARCHIVE" -C "$(dirname "$BIN")" md
-          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          files: |
-            dist/*.dmg
-            dist/*.dmg.sha256
-            md-*.tar.gz
-            md-*.tar.gz.sha256
+          if [ -n "${KEYCHAIN:-}" ]; then security delete-keychain "$KEYCHAIN"; fi

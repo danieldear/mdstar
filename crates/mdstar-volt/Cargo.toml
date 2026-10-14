@@ -1,0 +1,122 @@
+[package]
+name = "mdstar-volt"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+description = "MD Star reader drawn natively with Volt UI Kit"
+publish = false
+
+# Standalone until Volt UI Kit is published: it depends on a local checkout of
+# the kit, so it stays outside the main workspace and its CI.
+[workspace]
+
+[[bin]]
+name = "mdstar-volt"
+path = "src/main.rs"
+
+# The Quick Look extension: Finder previews drawn by the app's renderer.
+[[bin]]
+name = "mdstar-preview"
+path = "src/preview.rs"
+
+# `cargo volt bundle` builds MD Star.app from this; `cargo volt release`
+# signs it with Developer ID, notarizes it and builds a disk image.
+[package.metadata.volt.bundle]
+name = "MD Star"
+identifier = "dev.mdstar.volt"
+icon = "assets/icon.icns"
+minimum-system-version = "13.0"
+category = "public.app-category.productivity"
+copyright = "MD Star contributors. MIT OR Apache-2.0."
+notary-profile = "mdstar"
+# The terminal viewer: Contents/MacOS/md runs `md` (see src/cli.rs).
+aliases = ["md"]
+
+# Finder's Space-bar preview, drawn by the app's renderer (src/preview.rs).
+[[package.metadata.volt.bundle.extensions]]
+name = "MD Star Preview"
+identifier = "dev.mdstar.volt.preview"
+binary = "mdstar-preview"
+point = "com.apple.quicklook.preview"
+principal-class = "MDStarPreviewProvider"
+[package.metadata.volt.bundle.extensions.attributes]
+QLIsDataBasedPreview = true
+QLSupportsSearchableItems = false
+QLSupportedContentTypes = ["net.daringfireball.markdown", "public.markdown"]
+
+# Markdown is ours by default.
+[[package.metadata.volt.bundle.document-types]]
+name = "Markdown Document"
+role = "Editor"
+rank = "Default"
+icon = "icon.icns"
+content-types = ["net.daringfireball.markdown", "public.markdown"]
+
+# Markdown extensions macOS has no type for, claimed by name.
+[[package.metadata.volt.bundle.document-types]]
+name = "Markdown Document"
+role = "Editor"
+rank = "Default"
+icon = "icon.icns"
+extensions = ["mdown", "mkd", "mkdn", "mdx"]
+
+# Text, data and source files list MD Star under Open With.
+[[package.metadata.volt.bundle.document-types]]
+name = "Text and Data"
+role = "Editor"
+rank = "Alternate"
+content-types = [
+    "public.plain-text", "public.json", "public.xml", "public.yaml",
+    "public.comma-separated-values-text", "public.tab-separated-values-text",
+    "public.source-code", "public.log", "public.html", "public.toml", "com.microsoft.ini",
+]
+
+[[package.metadata.volt.bundle.document-types]]
+name = "Configuration File"
+role = "Editor"
+rank = "Alternate"
+extensions = ["env", "lock", "json5", "jsonc", "conf", "cfg", "properties"]
+
+[[package.metadata.volt.bundle.document-types]]
+name = "Folder"
+role = "Viewer"
+rank = "Alternate"
+content-types = ["public.folder"]
+
+[dependencies]
+mdstar-core = { path = "../mdstar-core" }
+mermaid-text = "0.16.1"
+unicode-width = "0.2"
+miniz_oxide = "0.8"
+anyhow = "1.0.100"
+clap = { version = "4.5.40", features = ["derive"] }
+shell-words = "1.1.0"
+crossterm = "0.29.0"
+ratatui = "0.30.0"
+ansi-to-tui = "8.0.1"
+ratatui-textarea = "0.9.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "6"
+volt-ui-kit = { path = "../../../rust/volt-ui-kit", features = ["native-gpu", "native-desktop"] }
+
+# Finder "Open With" and double-click: AppKit hands the app file URLs.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSString", "NSURL", "NSAttributedString", "NSGeometry", "NSObject"] }
+block2 = "0.6"
+# Native context menus with Look Up, Share, Speech and Services.
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSColor", "NSColorSpace", "NSEvent", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSSharingService", "NSSpeechSynthesizer", "NSView", "NSWindow"] }
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# A smaller app: 9.8 MB per architecture instead of 20.6 MB, for rendering
+# about 3% slower (an 83,000-line document) and slower release builds.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
