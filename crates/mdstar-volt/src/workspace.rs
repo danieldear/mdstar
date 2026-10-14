@@ -141,12 +141,10 @@ impl Node {
 }
 
 pub fn is_markdown(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| {
-            let e = e.to_ascii_lowercase();
-            e != "txt" && MARKDOWN.contains(&e.as_str())
-        })
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        let e = e.to_ascii_lowercase();
+        e != "txt" && MARKDOWN.contains(&e.as_str())
+    })
 }
 
 /// The files under `root` the reader can show, keeping only folders that
@@ -156,9 +154,10 @@ pub fn scan(root: &Path) -> Node {
     let children = scan_dir(root, 0, &mut budget).unwrap_or_default();
     Node {
         path: root.to_path_buf(),
-        name: root
-            .file_name()
-            .map_or_else(|| root.display().to_string(), |n| n.to_string_lossy().into_owned()),
+        name: root.file_name().map_or_else(
+            || root.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        ),
         children: Some(children),
     }
 }
@@ -179,7 +178,9 @@ fn scan_dir(dir: &Path, depth: usize, budget: &mut usize) -> Option<Vec<Node>> {
         }
         let path = entry.path();
         // Follow symlinked files but not folders, which can loop.
-        let Ok(kind) = entry.file_type() else { continue };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_dir() {
             if SKIP.contains(&name.as_str()) {
                 continue;
@@ -219,7 +220,10 @@ fn natural(name: &str) -> Vec<(String, u64)> {
             digits.push(c);
         } else {
             if !digits.is_empty() {
-                parts.push((std::mem::take(&mut text), digits.parse().unwrap_or(u64::MAX)));
+                parts.push((
+                    std::mem::take(&mut text),
+                    digits.parse().unwrap_or(u64::MAX),
+                ));
                 digits.clear();
             }
             text.extend(c.to_lowercase());

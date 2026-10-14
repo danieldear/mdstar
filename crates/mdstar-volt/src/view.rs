@@ -7,7 +7,10 @@ use volt_ui_kit::{ColorToken as Role, ui::prelude::*};
 
 use crate::{
     MARKDOWN,
-    app::{App, Doc, MenuTarget, Mode, file_action, file_name, heading_action, heading_rows, tab_action},
+    app::{
+        App, Doc, MenuTarget, Mode, file_action, file_name, heading_action, heading_rows,
+        tab_action,
+    },
     find,
     render::{self, Highlight, Typography},
     settings::{self, Appearance, CODE_FONTS, SidebarTab, TYPEFACES, Theme},
@@ -59,12 +62,17 @@ pub fn view(app: &App) -> Element<App> {
     } else {
         main.into()
     };
-    zstack![content, slash_menu(app), appearance_popover(app), settings_dialog(app)]
-        .key("root")
-        .align(Align::Stretch)
-        .color(Role::BaseContent)
-        .font_family("SF")
-        .into()
+    zstack![
+        content,
+        slash_menu(app),
+        appearance_popover(app),
+        settings_dialog(app)
+    ]
+    .key("root")
+    .align(Align::Stretch)
+    .color(Role::BaseContent)
+    .font_family("SF")
+    .into()
 }
 
 /// A macOS-style segmented control: a quiet track with the chosen option
@@ -88,7 +96,11 @@ fn segmented<T: Copy + PartialEq + 'static>(
                 .size(ControlSize::Small)
                 .font_size(12.5)
                 .font_weight(if chosen { 600 } else { 500 })
-                .color(if chosen { Role::BaseContent } else { Role::Muted })
+                .color(if chosen {
+                    Role::BaseContent
+                } else {
+                    Role::Muted
+                })
                 .height(24.)
                 .rounded(6.)
                 .flex(1.)
@@ -200,7 +212,11 @@ fn toolbar(app: &App) -> Element<App> {
                     group(doc.words),
                     doc.words.div_ceil(230).max(1)
                 ),
-                FileKind::Code("csv") => format!("{}  ·  Table  ·  {} lines", folder(app, doc), group(doc.words)),
+                FileKind::Code("csv") => format!(
+                    "{}  ·  Table  ·  {} lines",
+                    folder(app, doc),
+                    group(doc.words)
+                ),
                 FileKind::Code(language) => format!(
                     "{}  ·  {}  ·  {} lines",
                     folder(app, doc),
@@ -209,12 +225,18 @@ fn toolbar(app: &App) -> Element<App> {
                 ),
                 FileKind::Image => format!("{}  ·  Image", folder(app, doc)),
             };
-            let meta = if doc.dirty() { format!("{meta}  ·  Edited") } else { meta };
+            let meta = if doc.dirty() {
+                format!("{meta}  ·  Edited")
+            } else {
+                meta
+            };
             (doc.title.clone(), meta)
         }
         None => match &app.error {
             Some(_) => (
-                app.tabs.get(app.active).map_or("MD Star".into(), |t| t.title.clone()),
+                app.tabs
+                    .get(app.active)
+                    .map_or("MD Star".into(), |t| t.title.clone()),
                 "Couldn’t open".into(),
             ),
             None => ("MD Star".into(), "Markdown reader".into()),
@@ -233,9 +255,16 @@ fn toolbar(app: &App) -> Element<App> {
     items.push(mode_switch(app));
     items.push(spacer().width(8.).flex(0.).into());
     let dirty = app.doc.as_ref().is_some_and(Doc::dirty);
-    items.push(icon_button("save", Icon::Download, "Save  ⌘S", dirty, false, |app: &mut App| {
-        app.save();
-    }));
+    items.push(icon_button(
+        "save",
+        Icon::Download,
+        "Save  ⌘S",
+        dirty,
+        false,
+        |app: &mut App| {
+            app.save();
+        },
+    ));
     items.push(icon_button(
         "new",
         Icon::Plus,
@@ -244,7 +273,14 @@ fn toolbar(app: &App) -> Element<App> {
         false,
         App::new_document,
     ));
-    items.push(icon_button("open", Icon::Folder, "Open…  ⌘O", true, false, App::choose));
+    items.push(icon_button(
+        "open",
+        Icon::Folder,
+        "Open…  ⌘O",
+        true,
+        false,
+        App::choose,
+    ));
     items.push(icon_button(
         "find",
         Icon::Search,
@@ -295,7 +331,11 @@ fn folder(app: &App, doc: &Doc) -> String {
     for root in &app.tree {
         if let Ok(rel) = dir.strip_prefix(&root.path) {
             let rel = rel.display().to_string();
-            return if rel.is_empty() { root.name.clone() } else { format!("{}/{rel}", root.name) };
+            return if rel.is_empty() {
+                root.name.clone()
+            } else {
+                format!("{}/{rel}", root.name)
+            };
         }
     }
     short_home(&dir.display().to_string())
@@ -303,7 +343,9 @@ fn folder(app: &App, doc: &Doc) -> String {
 
 fn language_name(language: &str) -> String {
     match language {
-        "json" | "xml" | "html" | "yaml" | "toml" | "ini" | "sql" | "css" | "csv" => language.to_uppercase(),
+        "json" | "xml" | "html" | "yaml" | "toml" | "ini" | "sql" | "css" | "csv" => {
+            language.to_uppercase()
+        }
         "javascript" => "JavaScript".into(),
         "typescript" => "TypeScript".into(),
         "csharp" => "C#".into(),
@@ -312,7 +354,8 @@ fn language_name(language: &str) -> String {
         "text" => "Plain text".into(),
         other => {
             let mut c = other.chars();
-            c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
+            c.next()
+                .map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
         }
     }
 }
@@ -351,12 +394,20 @@ fn find_panel(app: &App) -> Element<App> {
             .width(240.)
             .height(30.)
             .font_size(13.),
-        text(if summary.is_empty() { " ".to_string() } else { summary.clone() })
-            .key("find-count")
-            .font_size(12.)
-            .text_align(TextAlign::Center)
-            .color(if summary == "No matches" { Role::Error } else { Role::Muted })
-            .width(78.),
+        text(if summary.is_empty() {
+            " ".to_string()
+        } else {
+            summary.clone()
+        })
+        .key("find-count")
+        .font_size(12.)
+        .text_align(TextAlign::Center)
+        .color(if summary == "No matches" {
+            Role::Error
+        } else {
+            Role::Muted
+        })
+        .width(78.),
         icon_button(
             "find-previous",
             Icon::ChevronUp,
@@ -373,7 +424,14 @@ fn find_panel(app: &App) -> Element<App> {
             false,
             |app: &mut App| app.find_step(true),
         ),
-        icon_button("find-close", Icon::Close, "Close  Esc", true, false, App::close_find),
+        icon_button(
+            "find-close",
+            Icon::Close,
+            "Close  Esc",
+            true,
+            false,
+            App::close_find
+        ),
     ]
     .key("find-panel")
     .gap(2., Axis::Horizontal)
@@ -408,9 +466,22 @@ fn tab_bar(app: &App) -> Element<App> {
         .iter()
         .enumerate()
         .map(|(i, tab)| {
-            let title = if tab.title.is_empty() { "New Tab".to_string() } else { tab.title.clone() };
-            let title = if app.tab_dirty(i) { format!("• {title}") } else { title };
-            tab_button(i, &title, i == app.active, open.filter(|(t, _)| *t == i).map(|(_, at)| at))
+            let title = if tab.title.is_empty() {
+                "New Tab".to_string()
+            } else {
+                tab.title.clone()
+            };
+            let title = if app.tab_dirty(i) {
+                format!("• {title}")
+            } else {
+                title
+            };
+            tab_button(
+                i,
+                &title,
+                i == app.active,
+                open.filter(|(t, _)| *t == i).map(|(_, at)| at),
+            )
         })
         .collect();
     hstack(tabs)
@@ -435,7 +506,11 @@ fn tab_button(i: usize, title: &str, active: bool, menu_at: Option<[f32; 2]>) ->
         .size(ControlSize::Small)
         .font_size(12.5)
         .font_weight(if active { 600 } else { 400 })
-        .color(if active { Role::BaseContent } else { Role::Muted })
+        .color(if active {
+            Role::BaseContent
+        } else {
+            Role::Muted
+        })
         .max_lines(1)
         .label_inset(26.)
         .rounded(7.)
@@ -529,7 +604,10 @@ fn sidebar(app: &App) -> Element<App> {
         vstack![
             segmented(
                 "sidebar-tab",
-                &[(SidebarTab::Files, "Files"), (SidebarTab::Outline, "Outline")],
+                &[
+                    (SidebarTab::Files, "Files"),
+                    (SidebarTab::Outline, "Outline")
+                ],
                 tab,
                 app.theme().dark(),
                 App::show_sidebar,
@@ -781,7 +859,9 @@ fn file_row(
     .width_fraction(1.)
     .open(menu_at.is_some())
     .position(menu_at.unwrap_or_default())
-    .on_context_open(move |app: &mut App, at| app.open_menu(MenuTarget::File(menu_path.clone()), at))
+    .on_context_open(move |app: &mut App, at| {
+        app.open_menu(MenuTarget::File(menu_path.clone()), at)
+    })
     .on_open_change(|app: &mut App, open| {
         if !open {
             app.menu = None;
@@ -832,13 +912,24 @@ fn outline(app: &App) -> Element<App> {
     let items: Vec<(usize, String, f32, bool)> = entries
         .into_iter()
         .filter_map(|(id, text, depth)| {
-            Some((*rows.get(&id)?, text, depth, current.as_deref() == Some(id.as_str())))
+            Some((
+                *rows.get(&id)?,
+                text,
+                depth,
+                current.as_deref() == Some(id.as_str()),
+            ))
         })
         .collect();
     let count = items.len();
     let list = lazy_list(count, |i| {
         let (row, label, depth, active) = &items[i];
-        outline_row(*row, label, *depth, *active, open.filter(|(r, _)| r == row).map(|(_, at)| at))
+        outline_row(
+            *row,
+            label,
+            *depth,
+            *active,
+            open.filter(|(r, _)| r == row).map(|(_, at)| at),
+        )
     })
     .key("outline")
     .estimate(ROW)
@@ -864,11 +955,23 @@ fn outline_entries(ir: &DocumentIr, filter: &str) -> Vec<(String, String, f32)> 
         .iter()
         .filter(|item| item.level <= top + 3)
         .filter(|item| filter.is_empty() || item.text.to_lowercase().contains(&filter))
-        .map(|item| (item.id.clone(), item.text.clone(), f32::from(item.level - top)))
+        .map(|item| {
+            (
+                item.id.clone(),
+                item.text.clone(),
+                f32::from(item.level - top),
+            )
+        })
         .collect()
 }
 
-fn outline_row(row: usize, label: &str, depth: f32, active: bool, menu_at: Option<[f32; 2]>) -> Element<App> {
+fn outline_row(
+    row: usize,
+    label: &str,
+    depth: f32,
+    active: bool,
+    menu_at: Option<[f32; 2]>,
+) -> Element<App> {
     let target = button(label)
         .key(format!("outline-{row}-button"))
         .variant(ButtonVariant::Ghost)
@@ -929,7 +1032,10 @@ fn body(app: &App) -> Element<App> {
                     .flex(1.)
                     .align(Align::Stretch)
             } else {
-                vstack![editor(app, doc)].width_fraction(1.).flex(1.).align(Align::Stretch)
+                vstack![editor(app, doc)]
+                    .width_fraction(1.)
+                    .flex(1.)
+                    .align(Align::Stretch)
             };
             vstack![column]
                 .key("source-pane")
@@ -944,7 +1050,9 @@ fn body(app: &App) -> Element<App> {
                 .border_sides(Sides::RIGHT)
                 .border_color(Role::Border)
                 .border_width(1.),
-            vstack![document(app, doc)].key("preview-pane").align(Align::Stretch),
+            vstack![document(app, doc)]
+                .key("preview-pane")
+                .align(Align::Stretch),
         )
         .key("split")
         .ratio(app.split)
@@ -1012,14 +1120,18 @@ fn slash_menu(app: &App) -> Element<App> {
         return vstack![].key("slash-layer").width(0.).height(0.).into();
     };
     let commands = crate::compose::matching(&slash.query);
-    let mut rows: Vec<Element<App>> = vec![vstack![text("INSERT MARKDOWN")
-        .font_size(10.5)
-        .font_weight(600)
-        .letter_spacing(0.06)
-        .color(Role::Muted)]
-    .padding(10., Edge::Horizontal)
-    .padding(4., Edge::Vertical)
-    .into()];
+    let mut rows: Vec<Element<App>> = vec![
+        vstack![
+            text("INSERT MARKDOWN")
+                .font_size(10.5)
+                .font_weight(600)
+                .letter_spacing(0.06)
+                .color(Role::Muted)
+        ]
+        .padding(10., Edge::Horizontal)
+        .padding(4., Edge::Vertical)
+        .into(),
+    ];
     for (i, command) in commands.iter().enumerate() {
         let chosen = i == slash.index;
         let mut b = button("")
@@ -1038,9 +1150,11 @@ fn slash_menu(app: &App) -> Element<App> {
             zstack![
                 b,
                 hstack![
-                    icon(command.icon)
-                        .size(16.)
-                        .color(if chosen { Role::Primary } else { Role::Muted }),
+                    icon(command.icon).size(16.).color(if chosen {
+                        Role::Primary
+                    } else {
+                        Role::Muted
+                    }),
                     vstack![
                         text(command.title).font_size(13.).font_weight(600),
                         text(command.subtitle).font_size(11.).color(Role::Muted),
@@ -1149,7 +1263,11 @@ fn save_banner(app: &App) -> Element<App> {
     let conflict = error.contains("changed on disk");
     let mut items: Vec<Element<App>> = vec![
         icon(Icon::Warning).size(15.).color(Role::Warning).into(),
-        text(error.clone()).font_size(12.5).flex(1.).max_lines(2).into(),
+        text(error.clone())
+            .font_size(12.5)
+            .flex(1.)
+            .max_lines(2)
+            .into(),
     ];
     if conflict {
         items.push(
@@ -1194,7 +1312,10 @@ fn save_banner(app: &App) -> Element<App> {
 
 pub fn typography(app: &App) -> Typography {
     // Source files and tables use the whole width.
-    let wide = app.doc.as_ref().is_some_and(|d| matches!(d.kind, FileKind::Code(_)));
+    let wide = app
+        .doc
+        .as_ref()
+        .is_some_and(|d| matches!(d.kind, FileKind::Code(_)));
     Typography {
         size: app.settings.font_size,
         line: app.settings.line_height,
@@ -1245,7 +1366,11 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
         .on_window_change(|app: &mut App, window| {
             // Rows above the viewport are overscan; the first visible row
             // follows them (or is row 0 at the top).
-            let first = if window.start == 0 { 0 } else { window.start + 4 };
+            let first = if window.start == 0 {
+                0
+            } else {
+                window.start + 4
+            };
             let scrolled = first != app.first_visible;
             app.first_visible = first;
             app.window = window;
@@ -1319,12 +1444,14 @@ fn welcome(app: &App) -> Element<App> {
         .cloned()
         .collect();
     if !recent.is_empty() {
-        let mut rows: Vec<Element<App>> = vec![text("RECENT")
-            .font_size(10.5)
-            .font_weight(600)
-            .letter_spacing(0.07)
-            .color(Role::Muted)
-            .into()];
+        let mut rows: Vec<Element<App>> = vec![
+            text("RECENT")
+                .font_size(10.5)
+                .font_weight(600)
+                .letter_spacing(0.07)
+                .color(Role::Muted)
+                .into(),
+        ];
         for (i, path) in recent.into_iter().enumerate() {
             let folder = path
                 .parent()
@@ -1386,7 +1513,9 @@ fn welcome(app: &App) -> Element<App> {
 
 fn short_home(path: &str) -> String {
     match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && path.starts_with(&home) => format!("~{}", &path[home.len()..]),
+        Ok(home) if !home.is_empty() && path.starts_with(&home) => {
+            format!("~{}", &path[home.len()..])
+        }
         _ => path.to_owned(),
     }
 }
@@ -1454,7 +1583,14 @@ fn settings_dialog(app: &App) -> Element<App> {
         .on_open_change(|app: &mut App, open| app.open_select = open.then_some("code"))
         .width(220.);
     let size = hstack![
-        icon_button("set-smaller", Icon::Minus, "Smaller  ⌘−", s.font_size > settings::SIZES[0], false, |app: &mut App| app.zoom(-1)),
+        icon_button(
+            "set-smaller",
+            Icon::Minus,
+            "Smaller  ⌘−",
+            s.font_size > settings::SIZES[0],
+            false,
+            |app: &mut App| app.zoom(-1)
+        ),
         text(format!("{} pt", s.font_size))
             .font_size(13.)
             .text_align(TextAlign::Center)
@@ -1478,14 +1614,18 @@ fn settings_dialog(app: &App) -> Element<App> {
     .gap(4., Axis::Horizontal)
     .align(Align::Center);
     let spacing = hstack![
-        slider(s.line_height)
-            .key("set-line")
-            .range(settings::LINE_HEIGHTS)
-            .step(0.05)
-            .on_change(|app: &mut App, v| app.configure(|s| s.line_height = (v * 20.).round() / 20.))
-            .width(200.),
-        text(format!("{:.2}", s.line_height)).font_size(12.).color(Role::Muted),
-    ]
+            slider(s.line_height)
+                .key("set-line")
+                .range(settings::LINE_HEIGHTS)
+                .step(0.05)
+                .on_change(
+                    |app: &mut App, v| app.configure(|s| s.line_height = (v * 20.).round() / 20.)
+                )
+                .width(200.),
+            text(format!("{:.2}", s.line_height))
+                .font_size(12.)
+                .color(Role::Muted),
+        ]
     .gap(10., Axis::Horizontal)
     .align(Align::Center);
     let width = hstack![
@@ -1495,15 +1635,23 @@ fn settings_dialog(app: &App) -> Element<App> {
             .step(20.)
             .on_change(|app: &mut App, v| app.configure(|s| s.width = (v / 20.).round() * 20.))
             .width(200.),
-        text(format!("{} pt", s.width as i32)).font_size(12.).color(Role::Muted),
+        text(format!("{} pt", s.width as i32))
+            .font_size(12.)
+            .color(Role::Muted),
     ]
     .gap(10., Axis::Horizontal)
     .align(Align::Center);
     let content = vstack![
         section("Appearance"),
         field("Appearance", appearance.into()),
-        field("Light theme", swatches("set-light", &Theme::LIGHT, s.light_theme, [116., 54.])),
-        field("Dark theme", swatches("set-dark", &Theme::DARK, s.dark_theme, [116., 54.])),
+        field(
+            "Light theme",
+            swatches("set-light", &Theme::LIGHT, s.light_theme, [116., 54.])
+        ),
+        field(
+            "Dark theme",
+            swatches("set-dark", &Theme::DARK, s.dark_theme, [116., 54.])
+        ),
         field("Accent", accents(app, "set")),
         field("Sidebar", glass_control(app, "set-glass")),
         field("Background", opacity_control(app)),
@@ -1624,10 +1772,17 @@ fn swatches(prefix: &str, themes: &[Theme], selected: Theme, size: [f32; 2]) -> 
                     hstack![
                         text("Aa").font_size(15.).font_weight(700).color(c.text),
                         spacer(),
-                        vstack![].width(9.).height(9.).rounded(4.5).background(c.accent),
+                        vstack![]
+                            .width(9.)
+                            .height(9.)
+                            .rounded(4.5)
+                            .background(c.accent),
                     ]
                     .align(Align::Center),
-                    text(theme.name()).font_size(10.5).color(c.muted).max_lines(1),
+                    text(theme.name())
+                        .font_size(10.5)
+                        .color(c.muted)
+                        .max_lines(1),
                 ]
                 .key(format!("{key}-face"))
                 .gap(2., Axis::Vertical)
@@ -1637,7 +1792,11 @@ fn swatches(prefix: &str, themes: &[Theme], selected: Theme, size: [f32; 2]) -> 
                 .height(h)
                 .background(c.page)
                 .rounded(9.)
-                .border_color(if chosen { Role::Primary.into() } else { c.border.to_string() })
+                .border_color(if chosen {
+                    Role::Primary.into()
+                } else {
+                    c.border.to_string()
+                })
                 .border_width(if chosen { 2. } else { 1. })
                 .scroll_passthrough(true),
             ]
@@ -1667,7 +1826,14 @@ fn accents(app: &App, prefix: &str) -> Element<App> {
                 Accent::Theme => app.theme().colors().accent.to_string(),
                 #[cfg(target_os = "macos")]
                 Accent::System => crate::macos::system_accent()
-                    .map(|c| format!("#{:02X}{:02X}{:02X}", (c[0] * 255.) as u8, (c[1] * 255.) as u8, (c[2] * 255.) as u8))
+                    .map(|c| {
+                        format!(
+                            "#{:02X}{:02X}{:02X}",
+                            (c[0] * 255.) as u8,
+                            (c[1] * 255.) as u8,
+                            (c[2] * 255.) as u8
+                        )
+                    })
                     .unwrap_or_else(|| "#007AFF".into()),
                 #[cfg(not(target_os = "macos"))]
                 Accent::System => "#007AFF".into(),
@@ -1675,7 +1841,10 @@ fn accents(app: &App, prefix: &str) -> Element<App> {
             };
             let key = format!("{prefix}-accent-{accent:?}").to_lowercase();
             let mut dot = vstack![if chosen {
-                icon(Icon::Check).size(11.).color(Role::PrimaryContent).into()
+                icon(Icon::Check)
+                    .size(11.)
+                    .color(Role::PrimaryContent)
+                    .into()
             } else {
                 Element::from(spacer().width(0.).flex(0.))
             }]
@@ -1687,7 +1856,9 @@ fn accents(app: &App, prefix: &str) -> Element<App> {
             .background(color)
             .scroll_passthrough(true);
             if chosen {
-                dot = dot.border_color(Role::BaseContent.alpha(40)).border_width(2.);
+                dot = dot
+                    .border_color(Role::BaseContent.alpha(40))
+                    .border_width(2.);
             }
             tooltip(
                 accent.name(),
@@ -1710,7 +1881,11 @@ fn accents(app: &App, prefix: &str) -> Element<App> {
             .into()
         })
         .collect();
-    hstack(dots).key(format!("{prefix}-accents")).gap(4., Axis::Horizontal).wrap(true).into()
+    hstack(dots)
+        .key(format!("{prefix}-accents"))
+        .gap(4., Axis::Horizontal)
+        .wrap(true)
+        .into()
 }
 
 fn glass_control(app: &App, key: &str) -> Element<App> {
@@ -1757,8 +1932,18 @@ fn appearance_popover(app: &App) -> Element<App> {
         accents(app, "pop"),
         hstack![
             text("Text size").font_size(12.5).flex(1.),
-            icon_button("pop-smaller", Icon::Minus, "Smaller  ⌘−", s.font_size > settings::SIZES[0], false, |app: &mut App| app.zoom(-1)),
-            text(format!("{} pt", s.font_size)).font_size(12.5).text_align(TextAlign::Center).width(46.),
+            icon_button(
+                "pop-smaller",
+                Icon::Minus,
+                "Smaller  ⌘−",
+                s.font_size > settings::SIZES[0],
+                false,
+                |app: &mut App| app.zoom(-1)
+            ),
+            text(format!("{} pt", s.font_size))
+                .font_size(12.5)
+                .text_align(TextAlign::Center)
+                .width(46.),
             icon_button(
                 "pop-bigger",
                 Icon::Plus,
@@ -1810,7 +1995,9 @@ fn preview(app: &App) -> Element<App> {
             span("Body text uses your typeface at "),
             span(format!("{} pt", t.size)).bold(),
             span(", with "),
-            span("\u{202F}inline code\u{202F}").code().family(t.code_family.clone()),
+            span("\u{202F}inline code\u{202F}")
+                .code()
+                .family(t.code_family.clone()),
             span(" in the code font."),
         ])
         .font_family(t.family.clone())

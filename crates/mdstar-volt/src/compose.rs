@@ -33,14 +33,70 @@ const fn cmd(
 }
 
 pub const COMMANDS: [SlashCommand; 14] = [
-    cmd("Heading 1", "Large section heading", Icon::Type, "h1 title", "# ", (2, 2)),
-    cmd("Heading 2", "Medium section heading", Icon::Type, "h2 subtitle", "## ", (3, 3)),
-    cmd("Heading 3", "Small section heading", Icon::Type, "h3", "### ", (4, 4)),
-    cmd("Bulleted List", "Create a simple list", Icon::List, "ul bullet unordered", "- ", (2, 2)),
-    cmd("Numbered List", "Create an ordered list", Icon::List, "ol ordered number", "1. ", (3, 3)),
-    cmd("Task", "Create a Markdown checkbox", Icon::Check, "todo checkbox checklist", "- [ ] ", (6, 6)),
-    cmd("Quote", "Capture a quotation or callout", Icon::Edit, "blockquote callout", "> ", (2, 2)),
-    cmd("Code Block", "Insert a fenced code block", Icon::Command, "code fence pre", "```\n\n```", (4, 4)),
+    cmd(
+        "Heading 1",
+        "Large section heading",
+        Icon::Type,
+        "h1 title",
+        "# ",
+        (2, 2),
+    ),
+    cmd(
+        "Heading 2",
+        "Medium section heading",
+        Icon::Type,
+        "h2 subtitle",
+        "## ",
+        (3, 3),
+    ),
+    cmd(
+        "Heading 3",
+        "Small section heading",
+        Icon::Type,
+        "h3",
+        "### ",
+        (4, 4),
+    ),
+    cmd(
+        "Bulleted List",
+        "Create a simple list",
+        Icon::List,
+        "ul bullet unordered",
+        "- ",
+        (2, 2),
+    ),
+    cmd(
+        "Numbered List",
+        "Create an ordered list",
+        Icon::List,
+        "ol ordered number",
+        "1. ",
+        (3, 3),
+    ),
+    cmd(
+        "Task",
+        "Create a Markdown checkbox",
+        Icon::Check,
+        "todo checkbox checklist",
+        "- [ ] ",
+        (6, 6),
+    ),
+    cmd(
+        "Quote",
+        "Capture a quotation or callout",
+        Icon::Edit,
+        "blockquote callout",
+        "> ",
+        (2, 2),
+    ),
+    cmd(
+        "Code Block",
+        "Insert a fenced code block",
+        Icon::Command,
+        "code fence pre",
+        "```\n\n```",
+        (4, 4),
+    ),
     cmd(
         "Table",
         "Insert a two-column table",
@@ -49,8 +105,22 @@ pub const COMMANDS: [SlashCommand; 14] = [
         "| Column | Column |\n| --- | --- |\n|  |  |",
         (2, 8),
     ),
-    cmd("Link", "Insert a Markdown link", Icon::Link, "url href", "[text](https://)", (1, 5)),
-    cmd("Image", "Insert an image reference", Icon::Image, "picture img", "![alt text](image.png)", (2, 10)),
+    cmd(
+        "Link",
+        "Insert a Markdown link",
+        Icon::Link,
+        "url href",
+        "[text](https://)",
+        (1, 5),
+    ),
+    cmd(
+        "Image",
+        "Insert an image reference",
+        Icon::Image,
+        "picture img",
+        "![alt text](image.png)",
+        (2, 10),
+    ),
     cmd(
         "Mermaid Diagram",
         "Insert a Mermaid diagram block",
@@ -59,7 +129,14 @@ pub const COMMANDS: [SlashCommand; 14] = [
         "```mermaid\ngraph TD\n  A --> B\n```",
         (22, 29),
     ),
-    cmd("Divider", "Insert a horizontal rule", Icon::Minus, "hr rule separator line", "---\n", (4, 4)),
+    cmd(
+        "Divider",
+        "Insert a horizontal rule",
+        Icon::Minus,
+        "hr rule separator line",
+        "---\n",
+        (4, 4),
+    ),
     cmd(
         "Front Matter",
         "Insert YAML document metadata",
@@ -124,12 +201,17 @@ pub fn continue_list(text: &str, caret: usize) -> Option<String> {
         return None;
     }
     let line = &text[line_start..line_end];
-    let indent: String = line.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+    let indent: String = line
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect();
     let rest = &line[indent.len()..];
     let (marker, content) = if let Some(after) = ["- [ ] ", "- [x] ", "* [ ] ", "* [x] "]
         .iter()
-        .find_map(|m| rest.strip_prefix(m).map(|c| (m[..2].to_owned() + "[ ] ", c)))
-    {
+        .find_map(|m| {
+            rest.strip_prefix(m)
+                .map(|c| (m[..2].to_owned() + "[ ] ", c))
+        }) {
         after
     } else if let Some(c) = ["- ", "* ", "+ ", "> "]
         .iter()
@@ -138,7 +220,9 @@ pub fn continue_list(text: &str, caret: usize) -> Option<String> {
         c
     } else {
         let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-        let after = rest[digits.len()..].strip_prefix(". ").or_else(|| rest[digits.len()..].strip_prefix(") "))?;
+        let after = rest[digits.len()..]
+            .strip_prefix(". ")
+            .or_else(|| rest[digits.len()..].strip_prefix(") "))?;
         if digits.is_empty() || digits.len() > 9 {
             return None;
         }
@@ -163,7 +247,11 @@ mod tests {
         assert_eq!(slash_at("a /b", 4), None, "mid-line slashes are text");
         assert_eq!(slash_at("/zzz", 4), None, "nothing matches");
         assert_eq!(slash_at("http://x", 7), None);
-        assert_eq!(matching("list").len(), 3, "bulleted, numbered and task (checklist)");
+        assert_eq!(
+            matching("list").len(),
+            3,
+            "bulleted, numbered and task (checklist)"
+        );
         assert_eq!(matching("TODO")[0].title, "Task");
     }
 
@@ -183,7 +271,11 @@ mod tests {
     #[test]
     fn command_selections_fall_inside_their_text() {
         for c in &COMMANDS {
-            assert!(c.select.0 <= c.select.1 && c.select.1 <= c.insert.len(), "{}", c.title);
+            assert!(
+                c.select.0 <= c.select.1 && c.select.1 <= c.insert.len(),
+                "{}",
+                c.title
+            );
             assert!(c.insert.is_char_boundary(c.select.0) && c.insert.is_char_boundary(c.select.1));
         }
         assert_eq!(&COMMANDS[9].insert[1..5], "text");
@@ -257,11 +349,24 @@ pub fn source_tints(text: &str) -> Vec<(usize, usize, u8)> {
         }
         let hashes = trimmed.chars().take_while(|c| *c == '#').count();
         if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
-            push(&mut out, start + indent, start + indent + hashes, tint::SYNTAX);
+            push(
+                &mut out,
+                start + indent,
+                start + indent + hashes,
+                tint::SYNTAX,
+            );
             push(&mut out, start + indent + hashes, end, tint::HEADING);
             continue;
         }
-        if !trimmed.is_empty() && ["---", "***", "___"].iter().any(|r| trimmed.chars().all(|c| c == r.chars().next().unwrap() || c == ' ') && trimmed.len() >= 3 && trimmed.starts_with(&r[..1])) {
+        if !trimmed.is_empty()
+            && ["---", "***", "___"].iter().any(|r| {
+                trimmed
+                    .chars()
+                    .all(|c| c == r.chars().next().unwrap() || c == ' ')
+                    && trimmed.len() >= 3
+                    && trimmed.starts_with(&r[..1])
+            })
+        {
             push(&mut out, start, end, tint::SYNTAX);
             continue;
         }
@@ -270,13 +375,19 @@ pub fn source_tints(text: &str) -> Vec<(usize, usize, u8)> {
         let rest = trimmed;
         let marker = if rest.starts_with("> ") || rest == ">" {
             1
-        } else if ["- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] "].iter().any(|m| rest.starts_with(m)) {
+        } else if ["- [ ] ", "- [x] ", "- [X] ", "* [ ] ", "* [x] "]
+            .iter()
+            .any(|m| rest.starts_with(m))
+        {
             6
         } else if ["- ", "* ", "+ "].iter().any(|m| rest.starts_with(m)) {
             2
         } else {
             let digits = rest.chars().take_while(char::is_ascii_digit).count();
-            if digits > 0 && digits < 10 && (rest[digits..].starts_with(". ") || rest[digits..].starts_with(") ")) {
+            if digits > 0
+                && digits < 10
+                && (rest[digits..].starts_with(". ") || rest[digits..].starts_with(") "))
+            {
                 digits + 2
             } else {
                 0
@@ -305,9 +416,20 @@ fn inline_tints(text: &str, start: usize, end: usize, out: &mut Vec<(usize, usiz
         match bytes[i] {
             b'`' => {
                 let ticks = bytes[i..].iter().take_while(|b| **b == b'`').count();
-                let close = line[i + ticks..].find(&line[i..i + ticks]).map(|c| i + ticks + c + ticks);
+                let close = line[i + ticks..]
+                    .find(&line[i..i + ticks])
+                    .map(|c| i + ticks + c + ticks);
                 let to = close.unwrap_or(i + ticks);
-                push(out, i, to, if close.is_some() { tint::CODE } else { tint::SYNTAX });
+                push(
+                    out,
+                    i,
+                    to,
+                    if close.is_some() {
+                        tint::CODE
+                    } else {
+                        tint::SYNTAX
+                    },
+                );
                 i = to;
             }
             b'<' if line[i..].starts_with("<!--") => {
@@ -350,7 +472,10 @@ mod tint_tests {
     use super::*;
 
     fn named(text: &str) -> Vec<(&str, u8)> {
-        source_tints(text).into_iter().map(|(a, b, t)| (&text[a..b], t)).collect()
+        source_tints(text)
+            .into_iter()
+            .map(|(a, b, t)| (&text[a..b], t))
+            .collect()
     }
 
     #[test]

@@ -55,7 +55,10 @@ pub enum Msg {
     Autosave(u64),
     /// Files changed on disk; `structural` when files appeared, went or
     /// were renamed.
-    Changed { paths: Vec<PathBuf>, structural: bool },
+    Changed {
+        paths: Vec<PathBuf>,
+        structural: bool,
+    },
     /// Changes settled: rescan the workspace if no later change came.
     Rescan(u64),
     /// The system asked to open these files or folders (Finder, the Dock).
@@ -232,7 +235,9 @@ impl App {
             Accent::System => crate::macos::system_accent(),
             #[cfg(not(target_os = "macos"))]
             Accent::System => None,
-            fixed => fixed.fixed(self.theme().dark()).and_then(volt_ui_kit::parse_hex),
+            fixed => fixed
+                .fixed(self.theme().dark())
+                .and_then(volt_ui_kit::parse_hex),
         }
     }
 
@@ -248,7 +253,10 @@ impl App {
         if let Some(path) = &self.settings_path
             && let Err(e) = self.settings.save(path)
         {
-            eprintln!("MD Star: could not save settings to {}: {e}", path.display());
+            eprintln!(
+                "MD Star: could not save settings to {}: {e}",
+                path.display()
+            );
         }
     }
 
@@ -476,7 +484,10 @@ impl App {
     /// Edit or stop editing: Markdown edits beside its preview, other text
     /// on its own.
     pub fn toggle_edit(&mut self) {
-        let markdown = self.doc.as_ref().is_some_and(|d| d.kind == FileKind::Markdown);
+        let markdown = self
+            .doc
+            .as_ref()
+            .is_some_and(|d| d.kind == FileKind::Markdown);
         self.set_mode(match self.mode {
             Mode::Preview if markdown => Mode::Split,
             Mode::Preview => Mode::Source,
@@ -546,15 +557,20 @@ impl App {
     /// Watch the workspace folders, and open files outside them, so outside
     /// changes show up. Only with a message sender (the running app).
     pub fn sync_watches(&mut self) {
-        let Some(sender) = self.sender.clone() else { return };
-        let mut wanted: Vec<(PathBuf, bool)> = self.tree.iter().map(|r| (r.path.clone(), true)).collect();
+        let Some(sender) = self.sender.clone() else {
+            return;
+        };
+        let mut wanted: Vec<(PathBuf, bool)> =
+            self.tree.iter().map(|r| (r.path.clone(), true)).collect();
         let open = self
             .path()
             .map(Path::to_path_buf)
             .into_iter()
             .chain(self.tabs.iter().filter_map(|t| t.path.clone()));
         for path in open {
-            if !wanted.iter().any(|(w, deep)| *deep && path.starts_with(w)) && !wanted.iter().any(|(w, _)| *w == path) {
+            if !wanted.iter().any(|(w, deep)| *deep && path.starts_with(w))
+                && !wanted.iter().any(|(w, _)| *w == path)
+            {
                 wanted.push((path, false));
             }
         }
@@ -577,7 +593,11 @@ impl App {
         });
         let Ok(mut watcher) = watcher else { return };
         for (path, deep) in &wanted {
-            let mode = if *deep { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+            let mode = if *deep {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
             let _ = watcher.watch(path, mode);
         }
         self.watcher = Some(watcher);
@@ -604,7 +624,9 @@ impl App {
                 }
             }
             for tab in &mut self.tabs {
-                let Some(state) = tab.saved.as_mut() else { continue };
+                let Some(state) = tab.saved.as_mut() else {
+                    continue;
+                };
                 if state.doc.as_ref().is_some_and(|d| changed(d) && !d.dirty())
                     && let Ok(doc) = load(path)
                 {
@@ -629,7 +651,9 @@ impl App {
 
     /// Write the current document if it changed. Returns false on failure.
     pub fn save(&mut self) -> bool {
-        let Some(doc) = &mut self.doc else { return true };
+        let Some(doc) = &mut self.doc else {
+            return true;
+        };
         match write(doc) {
             Ok(()) => {
                 self.save_error = None;
@@ -695,7 +719,9 @@ impl App {
         let found = self
             .doc
             .as_ref()
-            .filter(|_| s.start == s.end && s.caret_at <= self.doc.as_ref().map_or(0, |d| d.source.len()))
+            .filter(|_| {
+                s.start == s.end && s.caret_at <= self.doc.as_ref().map_or(0, |d| d.source.len())
+            })
             .and_then(|d| compose::slash_at(&d.source, s.caret_at))
             .filter(|(start, _)| self.slash_dismissed != Some(*start));
         self.slash = found.map(|(start, query)| {
@@ -719,9 +745,13 @@ impl App {
                 at: [s.caret[0], y],
             }
         });
-        if self.slash.is_none() && self.slash_dismissed.is_some_and(|d| {
-            self.doc.as_ref().is_none_or(|doc| compose::slash_at(&doc.source, s.caret_at).is_none_or(|(at, _)| at != d))
-        }) {
+        if self.slash.is_none()
+            && self.slash_dismissed.is_some_and(|d| {
+                self.doc.as_ref().is_none_or(|doc| {
+                    compose::slash_at(&doc.source, s.caret_at).is_none_or(|(at, _)| at != d)
+                })
+            })
+        {
             self.slash_dismissed = None;
         }
     }
@@ -772,7 +802,12 @@ impl App {
         let Some(row) = row.or_else(|| units.len().checked_sub(1)) else {
             return;
         };
-        let visible = self.first_visible..self.window.end.saturating_sub(4).max(self.first_visible + 1);
+        let visible = self.first_visible
+            ..self
+                .window
+                .end
+                .saturating_sub(4)
+                .max(self.first_visible + 1);
         if !visible.contains(&row) {
             self.sync = Some((Pane::Editor, std::time::Instant::now()));
             self.jump_to(row.saturating_sub(1));
@@ -791,7 +826,11 @@ impl App {
             }
             _ => false,
         };
-        if continues { vec![EditKey::Enter] } else { Vec::new() }
+        if continues {
+            vec![EditKey::Enter]
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn editor_key(&mut self, key: EditKey) {
@@ -822,7 +861,8 @@ impl App {
 
     /// Replace `/query` with command `index` of the matching commands.
     pub fn apply_slash(&mut self, index: usize) {
-        let (Some(slash), Some(doc), Some(s)) = (self.slash.take(), &self.doc, self.selection) else {
+        let (Some(slash), Some(doc), Some(s)) = (self.slash.take(), &self.doc, self.selection)
+        else {
             return;
         };
         let Some(command) = compose::matching(&slash.query).get(index).copied() else {
@@ -836,7 +876,9 @@ impl App {
     }
 
     fn continue_list(&mut self) {
-        let (Some(doc), Some(s)) = (&self.doc, self.selection) else { return };
+        let (Some(doc), Some(s)) = (&self.doc, self.selection) else {
+            return;
+        };
         let caret = s.caret_at.min(doc.source.len());
         let Some(marker) = compose::continue_list(&doc.source, caret) else {
             return;
@@ -861,7 +903,9 @@ impl App {
         if !self.editing() {
             return;
         }
-        let (Some(doc), Some(s)) = (&self.doc, self.selection) else { return };
+        let (Some(doc), Some(s)) = (&self.doc, self.selection) else {
+            return;
+        };
         let (start, end) = (s.start.min(doc.source.len()), s.end.min(doc.source.len()));
         let selected = &doc.source[start..end];
         let mut text = doc.source.clone();
@@ -884,9 +928,15 @@ impl App {
         if !self.editing() {
             return;
         }
-        let (Some(doc), Some(s)) = (&self.doc, self.selection) else { return };
+        let (Some(doc), Some(s)) = (&self.doc, self.selection) else {
+            return;
+        };
         let (start, end) = (s.start.min(doc.source.len()), s.end.min(doc.source.len()));
-        let label = if start == end { "text" } else { &doc.source[start..end] };
+        let label = if start == end {
+            "text"
+        } else {
+            &doc.source[start..end]
+        };
         let link = format!("[{label}](https://)");
         let mut text = doc.source.clone();
         text.replace_range(start..end, &link);
@@ -922,7 +972,9 @@ impl App {
     }
 
     pub fn tab_with(&self, path: &Path) -> Option<usize> {
-        self.tabs.iter().position(|t| t.path.as_deref() == Some(path))
+        self.tabs
+            .iter()
+            .position(|t| t.path.as_deref() == Some(path))
     }
 
     /// Show `path` in its tab, or in a new one. An empty current tab is used
@@ -1042,7 +1094,11 @@ impl App {
         {
             roots.push(parent.to_path_buf());
         }
-        self.tree = roots.iter().filter(|r| r.is_dir()).map(|r| workspace::scan(r)).collect();
+        self.tree = roots
+            .iter()
+            .filter(|r| r.is_dir())
+            .map(|r| workspace::scan(r))
+            .collect();
         self.sync_watches();
     }
 
@@ -1208,7 +1264,11 @@ impl App {
         let selected = self.selected_text.trim().to_owned();
         let quoted = {
             let short: String = selected.chars().take(24).collect();
-            if short.len() < selected.len() { format!("“{short}…”") } else { format!("“{short}”") }
+            if short.len() < selected.len() {
+                format!("“{short}…”")
+            } else {
+                format!("“{short}”")
+            }
         };
         if matches!(target, MenuTarget::Row(_)) && !selected.is_empty() {
             entries.extend([
@@ -1244,7 +1304,14 @@ impl App {
                 entries.extend([
                     Entry::Separator,
                     item("Find…", action::FIND),
-                    item(if self.editing() { "Stop Editing" } else { "Edit" }, text_action::EDIT),
+                    item(
+                        if self.editing() {
+                            "Stop Editing"
+                        } else {
+                            "Edit"
+                        },
+                        text_action::EDIT,
+                    ),
                     Entry::Separator,
                     item("Reload", action::RELOAD),
                     item("Reveal in Finder", action::REVEAL),
@@ -1267,7 +1334,10 @@ impl App {
                 if self.tree.iter().any(|r| r.path == *path) {
                     entries.push(item("Refresh", file_action::REFRESH));
                     if self.is_workspace_folder(path) {
-                        entries.extend([Entry::Separator, item("Remove from Workspace", file_action::REMOVE)]);
+                        entries.extend([
+                            Entry::Separator,
+                            item("Remove from Workspace", file_action::REMOVE),
+                        ]);
                     }
                 }
             }
@@ -1284,7 +1354,9 @@ impl App {
                 item("Reveal in Finder", tab_action::REVEAL),
             ]),
         }
-        let Some((tag, anchor)) = macos::popup(&entries) else { return };
+        let Some((tag, anchor)) = macos::popup(&entries) else {
+            return;
+        };
         let Ok(tag) = u8::try_from(tag) else { return };
         match tag {
             text_action::COPY => self.copy(&selected, None),
@@ -1293,7 +1365,10 @@ impl App {
                 "https://translate.google.com/?sl=auto&op=translate&text={}",
                 encode(&selected)
             )),
-            text_action::SEARCH => open_external(&format!("https://www.google.com/search?q={}", encode(&selected))),
+            text_action::SEARCH => open_external(&format!(
+                "https://www.google.com/search?q={}",
+                encode(&selected)
+            )),
             text_action::SHARE => macos::share(&selected, &anchor),
             text_action::SPEAK => macos::speak(&selected),
             text_action::STOP_SPEAKING => macos::stop_speaking(),
@@ -1319,7 +1394,11 @@ impl App {
             }
             action::COPY_CODE => {
                 if let Some(block) = unit.code() {
-                    let source = block.code.clone().or_else(|| block.raw.clone()).unwrap_or_default();
+                    let source = block
+                        .code
+                        .clone()
+                        .or_else(|| block.raw.clone())
+                        .unwrap_or_default();
                     self.copy(&source, None);
                 }
             }
@@ -1425,7 +1504,9 @@ fn encode(text: &str) -> String {
     let mut out = String::new();
     for b in text.bytes().take(2000) {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             b' ' => out.push('+'),
             _ => out.push_str(&format!("%{b:02X}")),
         }
@@ -1464,7 +1545,11 @@ fn write(doc: &mut Doc) -> Result<(), String> {
     if !doc.dirty() {
         return Ok(());
     }
-    match save_text_file(&doc.path, &doc.source, SavePolicy::MatchContents(&doc.saved)) {
+    match save_text_file(
+        &doc.path,
+        &doc.source,
+        SavePolicy::MatchContents(&doc.saved),
+    ) {
         Ok(()) => {
             doc.saved = doc.source.clone();
             Ok(())
@@ -1524,9 +1609,13 @@ fn load(path: &Path) -> Result<Doc, String> {
         .map_err(|e| format!("{} could not be opened: {e}", path.display()))?
         .len();
     if size > MAX_TEXT {
-        return Err(format!("{name} is too large to show ({} MB).", size / (1024 * 1024)));
+        return Err(format!(
+            "{name} is too large to show ({} MB).",
+            size / (1024 * 1024)
+        ));
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("{} could not be opened: {e}", path.display()))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("{} could not be opened: {e}", path.display()))?;
     if bytes.iter().take(8192).any(|b| *b == 0) {
         return Err(format!("{name} is a binary file."));
     }
@@ -1642,7 +1731,12 @@ fn csv_table(source: &str, path: &Path) -> BlockIr {
         .lines()
         .filter(|l| !l.trim().is_empty())
         .take(MAX_CSV_ROWS + 1)
-        .map(|line| split_csv(line, if tab { '\t' } else { ',' }).into_iter().map(cell).collect::<Vec<_>>());
+        .map(|line| {
+            split_csv(line, if tab { '\t' } else { ',' })
+                .into_iter()
+                .map(cell)
+                .collect::<Vec<_>>()
+        });
     let headers = rows.next().unwrap_or_default();
     BlockIr {
         headers,
@@ -1762,7 +1856,10 @@ fn open_external(target: &str) {
 /// Show a file in Finder (or the platform's file manager).
 fn reveal(path: &Path) {
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let _ = std::process::Command::new("xdg-open")
         .arg(path.parent().unwrap_or(path))
@@ -1794,7 +1891,10 @@ mod tests {
 
     #[test]
     fn csv_fields_respect_quotes() {
-        assert_eq!(split_csv(r#"a,"b, c","d ""q""",e"#, ','), ["a", "b, c", "d \"q\"", "e"]);
+        assert_eq!(
+            split_csv(r#"a,"b, c","d ""q""",e"#, ','),
+            ["a", "b, c", "d \"q\"", "e"]
+        );
         assert_eq!(split_csv("x\ty", '\t'), ["x", "y"]);
     }
 
@@ -1808,7 +1908,11 @@ mod tests {
     #[test]
     fn tabs_keep_their_documents_history_and_place() {
         let dir = temp("tabs");
-        for (name, body) in [("a.md", "# A\n\n[b](b.md)\n"), ("b.md", "# B\n"), ("c.md", "# C\n")] {
+        for (name, body) in [
+            ("a.md", "# A\n\n[b](b.md)\n"),
+            ("b.md", "# B\n"),
+            ("c.md", "# C\n"),
+        ] {
             std::fs::write(dir.join(name), body).unwrap();
         }
         let mut app = App::new(Settings::default(), None);
@@ -1824,7 +1928,11 @@ mod tests {
         assert_eq!(app.jump.0, 3, "the first tab returns to its place");
         assert!(app.back.is_empty(), "history belongs to its tab");
         app.follow_link("b.md".into());
-        assert_eq!((app.tabs.len(), app.active), (3, 1), "new tabs open beside the current one");
+        assert_eq!(
+            (app.tabs.len(), app.active),
+            (3, 1),
+            "new tabs open beside the current one"
+        );
         app.open_in_tab(dir.join("c.md"));
         assert_eq!(app.active, 2, "an open document switches to its tab");
         app.close_tab(2);
@@ -1853,13 +1961,21 @@ mod tests {
         assert_eq!(doc.ir.outline.len(), 2, "the preview follows the source");
         assert!(app.tab_dirty(0));
         assert!(app.save());
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Note\n\n## Added\n");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "# Note\n\n## Added\n"
+        );
         assert!(!app.doc.as_ref().unwrap().dirty());
         // Someone else edits the file; our next save must not clobber it.
         std::fs::write(&file, "# Theirs\n").unwrap();
         app.edit("# Mine\n".into());
         assert!(!app.save());
-        assert!(app.save_error.as_deref().unwrap().contains("changed on disk"));
+        assert!(
+            app.save_error
+                .as_deref()
+                .unwrap()
+                .contains("changed on disk")
+        );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Theirs\n");
         app.overwrite();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "# Mine\n");
@@ -1890,15 +2006,28 @@ mod tests {
             paths: vec![file.clone()],
             structural: false,
         });
-        assert_eq!(app.doc.as_ref().unwrap().title, "Two", "a clean document reloads");
+        assert_eq!(
+            app.doc.as_ref().unwrap().title,
+            "Two",
+            "a clean document reloads"
+        );
         app.edit("# Mine\n".into());
         std::fs::write(&file, "# Three\n").unwrap();
         app.message(Msg::Changed {
             paths: vec![file.clone()],
             structural: false,
         });
-        assert_eq!(app.doc.as_ref().unwrap().source, "# Mine\n", "edits are kept");
-        assert!(app.save_error.as_deref().unwrap().contains("changed on disk"));
+        assert_eq!(
+            app.doc.as_ref().unwrap().source,
+            "# Mine\n",
+            "edits are kept"
+        );
+        assert!(
+            app.save_error
+                .as_deref()
+                .unwrap()
+                .contains("changed on disk")
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -1926,7 +2055,10 @@ mod tests {
         app.selection_changed(caret(7));
         let slash = app.slash.clone().expect("menu open");
         assert_eq!((slash.start, slash.at), (6, [100., 226.]));
-        assert_eq!(app.editor_keys(), [EditKey::Up, EditKey::Down, EditKey::Enter]);
+        assert_eq!(
+            app.editor_keys(),
+            [EditKey::Up, EditKey::Down, EditKey::Enter]
+        );
         // Narrow to "task", choose it with Enter.
         app.edit("Intro\n/task".into());
         app.selection_changed(caret(11));
@@ -1941,7 +2073,10 @@ mod tests {
         app.selection_changed(caret(16));
         assert_eq!(app.editor_keys(), [EditKey::Enter]);
         app.editor_key(EditKey::Enter);
-        assert_eq!(app.doc.as_ref().unwrap().source, "Intro\n- [ ] milk\n- [ ] ");
+        assert_eq!(
+            app.doc.as_ref().unwrap().source,
+            "Intro\n- [ ] milk\n- [ ] "
+        );
         app.selection_changed(caret(23));
         app.editor_key(EditKey::Enter);
         assert_eq!(app.doc.as_ref().unwrap().source, "Intro\n- [ ] milk\n");

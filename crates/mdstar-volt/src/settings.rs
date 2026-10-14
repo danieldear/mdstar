@@ -60,20 +60,118 @@ pub struct Colors {
 /// on accent, mark, current mark)
 type Row = (Theme, &'static str, [&'static str; 11]);
 const THEMES: [Row; 14] = [
-    (Theme::Paper, "Paper", ["#FFFFFF", "#F1F1F4", "#F6F7F9", "#EBEBEF", "#1F2023", "#6B6E76", "#E3E4E8", "#0A66D8", "#FFFFFF", "#FFE7A0", "#FFBF47"]),
-    (Theme::Sepia, "Sepia", ["#F8F1E3", "#EEE3CC", "#F0E6D2", "#E6DAC1", "#3D3023", "#84705A", "#E1D3B8", "#A2541C", "#FFF8EE", "#F2D07A", "#E79C34"]),
-    (Theme::Mist, "Mist", ["#F6F8FB", "#E9EEF5", "#ECF0F5", "#E1E7EF", "#1D2632", "#64728A", "#DCE3EC", "#2563EB", "#FFFFFF", "#FCE38A", "#F9B728"]),
-    (Theme::SolarizedLight, "Solarized", ["#FDF6E3", "#EEE8D5", "#F4EDD9", "#E9E2CC", "#3E4D55", "#6C7C80", "#E4DCC5", "#268BD2", "#FDF6E3", "#F5E1A4", "#E5B83A"]),
-    (Theme::Latte, "Latte", ["#EFF1F5", "#E6E9EF", "#E8EBF1", "#DCE0E8", "#4C4F69", "#6C6F85", "#CCD0DA", "#8839EF", "#EFF1F5", "#F5DFA0", "#DF8E1D"]),
-    (Theme::RoseDawn, "Rosé Dawn", ["#FAF4ED", "#F2E9E1", "#FFFAF3", "#EDE4DC", "#575279", "#797593", "#DFDAD9", "#286983", "#FAF4ED", "#F6E3C0", "#EA9D34"]),
-    (Theme::Graphite, "Graphite", ["#1C1C1F", "#232327", "#26262B", "#303036", "#E4E4E7", "#9A9AA3", "#313137", "#6AA8FF", "#0B1220", "#5E4C12", "#A87B17"]),
-    (Theme::Midnight, "Midnight", ["#0B0C0E", "#111317", "#16191E", "#1E2229", "#D8DBE0", "#858C98", "#1F232A", "#7DB3FF", "#081120", "#4F400E", "#9C7412"]),
-    (Theme::Nord, "Nord", ["#2E3440", "#292E39", "#353C4A", "#3E4656", "#E5E9F0", "#A0AABB", "#3B4252", "#88C0D0", "#242933", "#6B5A2E", "#B8924A"]),
-    (Theme::Dracula, "Dracula", ["#282A36", "#21222C", "#303241", "#44475A", "#F8F8F2", "#9AA0C4", "#3B3E51", "#BD93F9", "#282A36", "#5D5B2A", "#A89A3B"]),
-    (Theme::TokyoNight, "Tokyo Night", ["#1A1B26", "#16161E", "#1F2335", "#292E42", "#C0CAF5", "#7A82A8", "#292E42", "#7AA2F7", "#1A1B26", "#4A4528", "#9E8A3A"]),
-    (Theme::SolarizedDark, "Solarized Dark", ["#002B36", "#00242D", "#073642", "#0B404D", "#B9C5C6", "#839496", "#0E3A45", "#268BD2", "#FDF6E3", "#5A4A0E", "#B58900"]),
-    (Theme::Mocha, "Mocha", ["#1E1E2E", "#181825", "#262637", "#313244", "#CDD6F4", "#9399B2", "#313244", "#CBA6F7", "#1E1E2E", "#554F2E", "#A08A3E"]),
-    (Theme::RosePine, "Rosé Pine", ["#191724", "#1F1D2E", "#26233A", "#2A2837", "#E0DEF4", "#908CAA", "#2A2837", "#9CCFD8", "#191724", "#554A2B", "#9C7A3E"]),
+    (
+        Theme::Paper,
+        "Paper",
+        [
+            "#FFFFFF", "#F1F1F4", "#F6F7F9", "#EBEBEF", "#1F2023", "#6B6E76", "#E3E4E8", "#0A66D8",
+            "#FFFFFF", "#FFE7A0", "#FFBF47",
+        ],
+    ),
+    (
+        Theme::Sepia,
+        "Sepia",
+        [
+            "#F8F1E3", "#EEE3CC", "#F0E6D2", "#E6DAC1", "#3D3023", "#84705A", "#E1D3B8", "#A2541C",
+            "#FFF8EE", "#F2D07A", "#E79C34",
+        ],
+    ),
+    (
+        Theme::Mist,
+        "Mist",
+        [
+            "#F6F8FB", "#E9EEF5", "#ECF0F5", "#E1E7EF", "#1D2632", "#64728A", "#DCE3EC", "#2563EB",
+            "#FFFFFF", "#FCE38A", "#F9B728",
+        ],
+    ),
+    (
+        Theme::SolarizedLight,
+        "Solarized",
+        [
+            "#FDF6E3", "#EEE8D5", "#F4EDD9", "#E9E2CC", "#3E4D55", "#6C7C80", "#E4DCC5", "#268BD2",
+            "#FDF6E3", "#F5E1A4", "#E5B83A",
+        ],
+    ),
+    (
+        Theme::Latte,
+        "Latte",
+        [
+            "#EFF1F5", "#E6E9EF", "#E8EBF1", "#DCE0E8", "#4C4F69", "#6C6F85", "#CCD0DA", "#8839EF",
+            "#EFF1F5", "#F5DFA0", "#DF8E1D",
+        ],
+    ),
+    (
+        Theme::RoseDawn,
+        "Rosé Dawn",
+        [
+            "#FAF4ED", "#F2E9E1", "#FFFAF3", "#EDE4DC", "#575279", "#797593", "#DFDAD9", "#286983",
+            "#FAF4ED", "#F6E3C0", "#EA9D34",
+        ],
+    ),
+    (
+        Theme::Graphite,
+        "Graphite",
+        [
+            "#1C1C1F", "#232327", "#26262B", "#303036", "#E4E4E7", "#9A9AA3", "#313137", "#6AA8FF",
+            "#0B1220", "#5E4C12", "#A87B17",
+        ],
+    ),
+    (
+        Theme::Midnight,
+        "Midnight",
+        [
+            "#0B0C0E", "#111317", "#16191E", "#1E2229", "#D8DBE0", "#858C98", "#1F232A", "#7DB3FF",
+            "#081120", "#4F400E", "#9C7412",
+        ],
+    ),
+    (
+        Theme::Nord,
+        "Nord",
+        [
+            "#2E3440", "#292E39", "#353C4A", "#3E4656", "#E5E9F0", "#A0AABB", "#3B4252", "#88C0D0",
+            "#242933", "#6B5A2E", "#B8924A",
+        ],
+    ),
+    (
+        Theme::Dracula,
+        "Dracula",
+        [
+            "#282A36", "#21222C", "#303241", "#44475A", "#F8F8F2", "#9AA0C4", "#3B3E51", "#BD93F9",
+            "#282A36", "#5D5B2A", "#A89A3B",
+        ],
+    ),
+    (
+        Theme::TokyoNight,
+        "Tokyo Night",
+        [
+            "#1A1B26", "#16161E", "#1F2335", "#292E42", "#C0CAF5", "#7A82A8", "#292E42", "#7AA2F7",
+            "#1A1B26", "#4A4528", "#9E8A3A",
+        ],
+    ),
+    (
+        Theme::SolarizedDark,
+        "Solarized Dark",
+        [
+            "#002B36", "#00242D", "#073642", "#0B404D", "#B9C5C6", "#839496", "#0E3A45", "#268BD2",
+            "#FDF6E3", "#5A4A0E", "#B58900",
+        ],
+    ),
+    (
+        Theme::Mocha,
+        "Mocha",
+        [
+            "#1E1E2E", "#181825", "#262637", "#313244", "#CDD6F4", "#9399B2", "#313244", "#CBA6F7",
+            "#1E1E2E", "#554F2E", "#A08A3E",
+        ],
+    ),
+    (
+        Theme::RosePine,
+        "Rosé Pine",
+        [
+            "#191724", "#1F1D2E", "#26233A", "#2A2837", "#E0DEF4", "#908CAA", "#2A2837", "#9CCFD8",
+            "#191724", "#554A2B", "#9C7A3E",
+        ],
+    ),
 ];
 
 /// An accent colour, like macOS's: the theme's own, the system's, or one
@@ -168,7 +266,10 @@ impl Theme {
     ];
 
     fn row(self) -> &'static Row {
-        THEMES.iter().find(|(t, _, _)| *t == self).expect("every theme has colours")
+        THEMES
+            .iter()
+            .find(|(t, _, _)| *t == self)
+            .expect("every theme has colours")
     }
 
     pub fn name(self) -> &'static str {
@@ -180,8 +281,19 @@ impl Theme {
     }
 
     pub fn colors(self) -> Colors {
-        let [page, sidebar, raised, hover, text, muted, border, accent, on_accent, mark, mark_current] =
-            self.row().2;
+        let [
+            page,
+            sidebar,
+            raised,
+            hover,
+            text,
+            muted,
+            border,
+            accent,
+            on_accent,
+            mark,
+            mark_current,
+        ] = self.row().2;
         Colors {
             page,
             sidebar,
@@ -407,7 +519,11 @@ impl Settings {
         if !self.translucent() && !self.sidebar_glass {
             return WindowBackground::Opaque;
         }
-        let opacity = if self.translucent() { self.opacity } else { 0.3 };
+        let opacity = if self.translucent() {
+            self.opacity
+        } else {
+            0.3
+        };
         if self.blur {
             WindowBackground::Blur { opacity }
         } else {
@@ -600,8 +716,17 @@ mod tests {
         for theme in Theme::LIGHT.iter().chain(&Theme::DARK) {
             let c = theme.colors();
             for hex in [
-                c.page, c.sidebar, c.raised, c.hover, c.text, c.muted, c.border, c.accent,
-                c.on_accent, c.mark, c.mark_current,
+                c.page,
+                c.sidebar,
+                c.raised,
+                c.hover,
+                c.text,
+                c.muted,
+                c.border,
+                c.accent,
+                c.on_accent,
+                c.mark,
+                c.mark_current,
             ] {
                 assert!(parse_hex(hex).is_some(), "{}: {hex}", theme.name());
             }

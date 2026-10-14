@@ -128,9 +128,16 @@ impl MenuTarget {
 
 /// One entry of a native context menu.
 pub enum Entry {
-    Item { title: String, tag: isize, enabled: bool },
+    Item {
+        title: String,
+        tag: isize,
+        enabled: bool,
+    },
     Separator,
-    Submenu { title: String, items: Vec<Entry> },
+    Submenu {
+        title: String,
+        items: Vec<Entry>,
+    },
     /// The system Services for the selected text.
     Services,
 }
@@ -141,13 +148,22 @@ pub struct Anchor {
     point: NSPoint,
 }
 
-fn build(entries: &[Entry], target: &MenuTarget, mtm: MainThreadMarker, services: &mut Option<Retained<NSMenu>>) -> Retained<NSMenu> {
+fn build(
+    entries: &[Entry],
+    target: &MenuTarget,
+    mtm: MainThreadMarker,
+    services: &mut Option<Retained<NSMenu>>,
+) -> Retained<NSMenu> {
     let menu = NSMenu::new(mtm);
     menu.setAutoenablesItems(false);
     for entry in entries {
         match entry {
             Entry::Separator => menu.addItem(&NSMenuItem::separatorItem(mtm)),
-            Entry::Item { title, tag, enabled } => {
+            Entry::Item {
+                title,
+                tag,
+                enabled,
+            } => {
                 // SAFETY: `pick:` is implemented by the target.
                 let item = unsafe {
                     NSMenuItem::initWithTitle_action_keyEquivalent(
@@ -219,16 +235,20 @@ pub fn set_selection(text: &str) {
 
 /// Show the dictionary popover for `text` where the menu opened.
 pub fn look_up(text: &str, at: &Anchor) {
-    let string = NSAttributedString::initWithString(NSAttributedString::alloc(), &NSString::from_str(text));
-    at.view.showDefinitionForAttributedString_atPoint(Some(&string), at.point);
+    let string =
+        NSAttributedString::initWithString(NSAttributedString::alloc(), &NSString::from_str(text));
+    at.view
+        .showDefinitionForAttributedString_atPoint(Some(&string), at.point);
 }
 
 /// The system share sheet for `text`, from where the menu opened.
 pub fn share(text: &str, at: &Anchor) {
-    let item: Retained<AnyObject> = Retained::into_super(Retained::into_super(NSString::from_str(text)));
+    let item: Retained<AnyObject> =
+        Retained::into_super(Retained::into_super(NSString::from_str(text)));
     let items = NSArray::from_retained_slice(&[item]);
     // SAFETY: the picker takes an array of shareable objects; strings are.
-    let picker = unsafe { NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), &items) };
+    let picker =
+        unsafe { NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), &items) };
     picker.showRelativeToRect_ofView_preferredEdge(
         NSRect::new(at.point, NSSize::new(1., 1.)),
         &at.view,
@@ -260,7 +280,9 @@ pub fn stop_speaking() {
 /// Offer the selection to the system Services menu: teach winit's view the
 /// NSServicesMenuRequestor methods and register plain text as sendable.
 pub fn offer_selection_to_services() {
-    let Some(mtm) = MainThreadMarker::new() else { return };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
     unsafe extern "C-unwind" fn valid_requestor(
         this: *mut AnyObject,
         _cmd: Sel,
@@ -294,36 +316,66 @@ pub fn offer_selection_to_services() {
         }
         pasteboard.clearContents();
         // SAFETY: the pasteboard type constant is a static NSString.
-        Bool::new(pasteboard.setString_forType(&NSString::from_str(&text), unsafe { NSPasteboardTypeString }))
+        Bool::new(
+            pasteboard.setString_forType(&NSString::from_str(&text), unsafe {
+                NSPasteboardTypeString
+            }),
+        )
     }
-    let Some(class) = AnyClass::get(c"WinitView") else { return };
+    let Some(class) = AnyClass::get(c"WinitView") else {
+        return;
+    };
     // SAFETY: the functions match `validRequestorForSendType:returnType:`
     // ("@@:@@") and `writeSelectionToPasteboard:types:` ("c@:@@"); the
     // first replaces NSResponder's inherited default only for WinitView.
     unsafe {
         let valid = std::mem::transmute::<
-            unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut NSString, *mut NSString) -> *mut AnyObject,
+            unsafe extern "C-unwind" fn(
+                *mut AnyObject,
+                Sel,
+                *mut NSString,
+                *mut NSString,
+            ) -> *mut AnyObject,
             Imp,
         >(valid_requestor);
         let write = std::mem::transmute::<
-            unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut NSPasteboard, *mut AnyObject) -> Bool,
+            unsafe extern "C-unwind" fn(
+                *mut AnyObject,
+                Sel,
+                *mut NSPasteboard,
+                *mut AnyObject,
+            ) -> Bool,
             Imp,
         >(write_selection);
         let class = (class as *const AnyClass).cast_mut();
-        ffi::class_addMethod(class, sel!(validRequestorForSendType:returnType:), valid, c"@@:@@".as_ptr());
-        ffi::class_addMethod(class, sel!(writeSelectionToPasteboard:types:), write, c"c@:@@".as_ptr());
+        ffi::class_addMethod(
+            class,
+            sel!(validRequestorForSendType:returnType:),
+            valid,
+            c"@@:@@".as_ptr(),
+        );
+        ffi::class_addMethod(
+            class,
+            sel!(writeSelectionToPasteboard:types:),
+            write,
+            c"c@:@@".as_ptr(),
+        );
     }
     let app = NSApplication::sharedApplication(mtm);
     // SAFETY: the pasteboard type constant is a static NSString.
     let plain: Retained<NSString> = unsafe { NSPasteboardTypeString }.copy();
-    app.registerServicesMenuSendTypes_returnTypes(&NSArray::from_retained_slice(&[plain]), &NSArray::new());
+    app.registerServicesMenuSendTypes_returnTypes(
+        &NSArray::from_retained_slice(&[plain]),
+        &NSArray::new(),
+    );
 }
 
 /// The macOS accent colour (System Settings › Appearance), as sRGB.
 pub fn system_accent() -> Option<[f32; 4]> {
     use objc2_app_kit::{NSColor, NSColorSpace};
     MainThreadMarker::new()?;
-    let color = NSColor::controlAccentColor().colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
+    let color =
+        NSColor::controlAccentColor().colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
     Some([
         color.redComponent() as f32,
         color.greenComponent() as f32,

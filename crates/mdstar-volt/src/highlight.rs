@@ -55,17 +55,90 @@ struct Lang {
 }
 
 const C_LIKE: [&str; 64] = [
-    "as", "async", "await", "break", "case", "catch", "class", "const", "continue", "crate",
-    "default", "defer", "delete", "do", "dyn", "else", "enum", "export", "extends", "extern",
-    "false", "final", "finally", "fn", "for", "func", "function", "go", "guard", "if", "impl",
-    "implements", "import", "in", "interface", "let", "loop", "match", "mod", "move", "mut", "new",
-    "nil", "null", "package", "private", "protected", "pub", "public", "return", "self", "Self",
-    "static", "struct", "super", "switch", "this", "throw", "trait", "true", "try", "type", "use",
+    "as",
+    "async",
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "crate",
+    "default",
+    "defer",
+    "delete",
+    "do",
+    "dyn",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "extern",
+    "false",
+    "final",
+    "finally",
+    "fn",
+    "for",
+    "func",
+    "function",
+    "go",
+    "guard",
+    "if",
+    "impl",
+    "implements",
+    "import",
+    "in",
+    "interface",
+    "let",
+    "loop",
+    "match",
+    "mod",
+    "move",
+    "mut",
+    "new",
+    "nil",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "pub",
+    "public",
+    "return",
+    "self",
+    "Self",
+    "static",
+    "struct",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "trait",
+    "true",
+    "try",
+    "type",
+    "use",
     "var",
 ];
 const MORE_C: [&str; 18] = [
-    "void", "while", "where", "yield", "unsafe", "typeof", "instanceof", "undefined", "of", "from",
-    "override", "virtual", "namespace", "using", "template", "typename", "val", "when",
+    "void",
+    "while",
+    "where",
+    "yield",
+    "unsafe",
+    "typeof",
+    "instanceof",
+    "undefined",
+    "of",
+    "from",
+    "override",
+    "virtual",
+    "namespace",
+    "using",
+    "template",
+    "typename",
+    "val",
+    "when",
 ];
 const SCRIPT: [&str; 44] = [
     "and", "as", "assert", "async", "await", "break", "case", "class", "continue", "def", "del",
@@ -175,7 +248,19 @@ fn is_ident(c: char) -> bool {
 }
 
 fn generic(code: &str, l: &Lang, language: &str) -> Vec<(Range<usize>, Token)> {
-    let keys = matches!(language, "json" | "jsonc" | "json5" | "yaml" | "yml" | "toml" | "ini" | "conf" | "properties" | "env");
+    let keys = matches!(
+        language,
+        "json"
+            | "jsonc"
+            | "json5"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "ini"
+            | "conf"
+            | "properties"
+            | "env"
+    );
     let sections = matches!(language, "toml" | "ini" | "conf");
     let bytes = code.as_bytes();
     let mut out = Vec::new();
@@ -256,7 +341,9 @@ fn generic(code: &str, l: &Lang, language: &str) -> Vec<(Range<usize>, Token)> {
         }
         if c.is_ascii_digit() && (i == 0 || !is_ident(code[..i].chars().last().unwrap_or(' '))) {
             let mut j = i;
-            while j < code.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'.' || bytes[j] == b'_') {
+            while j < code.len()
+                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'.' || bytes[j] == b'_')
+            {
                 j += 1;
             }
             out.push((i..j, Token::Number));
@@ -274,7 +361,8 @@ fn generic(code: &str, l: &Lang, language: &str) -> Vec<(Range<usize>, Token)> {
             }
             let word = &code[i..j];
             let after = code[j..].trim_start_matches([' ', '\t']);
-            let token = if keys && line_start && (after.starts_with(':') || after.starts_with('=')) {
+            let token = if keys && line_start && (after.starts_with(':') || after.starts_with('='))
+            {
                 Some(Token::Key)
             } else if keyword(l, word) {
                 Some(Token::Keyword)
@@ -357,7 +445,8 @@ fn diff(code: &str) -> Vec<(Range<usize>, Token)> {
     let mut at = 0;
     for line in code.split_inclusive('\n') {
         let end = at + line.trim_end_matches('\n').len();
-        let token = if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
+        let token = if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@")
+        {
             Some(Token::Attribute)
         } else if line.starts_with('+') {
             Some(Token::Inserted)
@@ -451,10 +540,7 @@ mod tests {
                 ("\"x\"", Token::String)
             ]
         );
-        assert_eq!(
-            spans("shell", "echo a#b # c"),
-            [("# c", Token::Comment)]
-        );
+        assert_eq!(spans("shell", "echo a#b # c"), [("# c", Token::Comment)]);
         assert_eq!(
             spans("xml", "<a href=\"x\"><!-- c --></a>"),
             [

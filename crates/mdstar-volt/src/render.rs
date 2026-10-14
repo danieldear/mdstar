@@ -74,7 +74,12 @@ pub struct Highlight<'a> {
 }
 
 impl<'a> Highlight<'a> {
-    pub fn new(needle: &'a [char], current: Option<Hit>, mark: &'a str, mark_current: &'a str) -> Self {
+    pub fn new(
+        needle: &'a [char],
+        current: Option<Hit>,
+        mark: &'a str,
+        mark_current: &'a str,
+    ) -> Self {
         Self {
             needle,
             current,
@@ -95,7 +100,11 @@ impl<'a> Highlight<'a> {
             .into_iter()
             .enumerate()
             .map(|(i, r)| {
-                let current = self.current == Some(Hit { row, nth: first + i });
+                let current = self.current
+                    == Some(Hit {
+                        row,
+                        nth: first + i,
+                    });
                 (r, current)
             })
             .collect()
@@ -121,7 +130,10 @@ pub struct Ctx<'a> {
 pub enum Unit<'a> {
     Block(&'a BlockIr),
     /// One item of a top-level list.
-    Item { list: &'a BlockIr, index: usize },
+    Item {
+        list: &'a BlockIr,
+        index: usize,
+    },
     /// A run of table rows; the first unit carries the header.
     Table {
         table: &'a BlockIr,
@@ -222,7 +234,9 @@ fn code_source(block: &BlockIr) -> &str {
 /// The byte range of the source a unit renders, when the parser gave one.
 pub fn source_range(unit: &Unit) -> Option<Range<usize>> {
     let range = match unit {
-        Unit::Block(b) | Unit::Table { table: b, .. } | Unit::Code { block: b, .. } => b.range.as_ref(),
+        Unit::Block(b) | Unit::Table { table: b, .. } | Unit::Code { block: b, .. } => {
+            b.range.as_ref()
+        }
         Unit::Item { list, index } => list.items[*index].range.as_ref(),
     }?;
     Some(range.start.byte_offset..range.end.byte_offset)
@@ -275,9 +289,13 @@ fn row_menu(unit: &Unit) -> Vec<MenuItem<u8>> {
     }
     items.extend([
         menu_separator(),
-        menu_item(action::FIND, "Find…").shortcut("⌘F").icon(Icon::Search),
+        menu_item(action::FIND, "Find…")
+            .shortcut("⌘F")
+            .icon(Icon::Search),
         menu_separator(),
-        menu_item(action::RELOAD, "Reload").shortcut("⌘R").icon(Icon::Refresh),
+        menu_item(action::RELOAD, "Reload")
+            .shortcut("⌘R")
+            .icon(Icon::Refresh),
         menu_item(action::REVEAL, "Reveal in Finder").icon(Icon::Folder),
     ]);
     items
@@ -559,7 +577,11 @@ fn heading(block: &BlockIr, key: String, ctx: &Ctx) -> Element<App> {
         .font_weight(if level <= 2 { 700 } else { 600 })
         .letter_spacing(if system && level <= 2 { -0.012 } else { 0. })
         .line_height(1.25)
-        .color(if level >= 5 { ColorToken::Muted } else { ColorToken::BaseContent })
+        .color(if level >= 5 {
+            ColorToken::Muted
+        } else {
+            ColorToken::BaseContent
+        })
         .into()
 }
 
@@ -579,12 +601,16 @@ fn list_item(list: &BlockIr, index: usize, ctx: &Ctx, depth: usize) -> Element<A
             .line_height(t.line)
             .selectable(false)
             .into(),
-        None => text(if depth.is_multiple_of(2) { "•" } else { "◦" })
-            .color(ColorToken::Muted)
-            .font_size(t.size)
-            .line_height(t.line)
-            .selectable(false)
-            .into(),
+        None => text(if depth.is_multiple_of(2) {
+            "•"
+        } else {
+            "◦"
+        })
+        .color(ColorToken::Muted)
+        .font_size(t.size)
+        .line_height(t.line)
+        .selectable(false)
+        .into(),
     };
     let body: Vec<Element<App>> = item
         .children
@@ -593,7 +619,9 @@ fn list_item(list: &BlockIr, index: usize, ctx: &Ctx, depth: usize) -> Element<A
         .collect();
     hstack![
         vstack![marker].width(t.gutter()).align(Align::End).flex(0.),
-        vstack(body).gap((t.size * 0.4).round(), Axis::Vertical).flex(1.),
+        vstack(body)
+            .gap((t.size * 0.4).round(), Axis::Vertical)
+            .flex(1.),
     ]
     .key(key_of(&item.id))
     .gap(10., Axis::Horizontal)
@@ -602,7 +630,12 @@ fn list_item(list: &BlockIr, index: usize, ctx: &Ctx, depth: usize) -> Element<A
 
 fn task_box(done: bool) -> Element<App> {
     let mut b = vstack(if done {
-        vec![icon(Icon::Check).size(11.).color(ColorToken::PrimaryContent).into()]
+        vec![
+            icon(Icon::Check)
+                .size(11.)
+                .color(ColorToken::PrimaryContent)
+                .into(),
+        ]
     } else {
         vec![]
     })
@@ -613,7 +646,9 @@ fn task_box(done: bool) -> Element<App> {
     .border_color(ColorToken::Muted.alpha(60))
     .border_width(1.5);
     if done {
-        b = b.background(ColorToken::Primary).border_color(ColorToken::Primary);
+        b = b
+            .background(ColorToken::Primary)
+            .border_color(ColorToken::Primary);
     }
     b.into()
 }
@@ -655,7 +690,11 @@ fn code_part(
                     .variant(ButtonVariant::Ghost)
                     .size(ControlSize::Small)
                     .font_size(12.)
-                    .color(if copied { ColorToken::Success } else { ColorToken::Muted })
+                    .color(if copied {
+                        ColorToken::Success
+                    } else {
+                        ColorToken::Muted
+                    })
                     .on_click(move |app: &mut App| app.copy(&source, Some(id.clone()))),
             ]
             .height(CODE_HEADER)
@@ -669,17 +708,27 @@ fn code_part(
         );
     }
     let code = if code.is_empty() { " " } else { code };
-    let language = block.language.as_deref().unwrap_or(if block.kind == "math" { "latex" } else { "" });
-    let body = styled(code, syntax_runs(language, code, ctx.dark), ctx, &t.code_family)
-        .key(format!("{key}-text-{part}"))
-        .font_family(t.code_family.clone())
-        .font_size(t.code_size())
-        .line_height(1.55)
-        .no_wrap(ctx.code_view);
+    let language = block
+        .language
+        .as_deref()
+        .unwrap_or(if block.kind == "math" { "latex" } else { "" });
+    let body = styled(
+        code,
+        syntax_runs(language, code, ctx.dark),
+        ctx,
+        &t.code_family,
+    )
+    .key(format!("{key}-text-{part}"))
+    .font_family(t.code_family.clone())
+    .font_size(t.code_size())
+    .line_height(1.55)
+    .no_wrap(ctx.code_view);
     let content: Element<App> = if ctx.code_view {
         // Line numbers in a gutter; code does not wrap, so rows line up.
         let lines = code.split('\n').count();
-        let numbers: Vec<String> = (first_line..first_line + lines).map(|n| n.to_string()).collect();
+        let numbers: Vec<String> = (first_line..first_line + lines)
+            .map(|n| n.to_string())
+            .collect();
         hstack![
             text(numbers.join("\n"))
                 .font_family(t.code_family.clone())
@@ -780,7 +829,13 @@ fn table_columns(table: &BlockIr) -> usize {
 
 /// Table rows `rows` (with the header on the first part); parts join into
 /// one rounded frame and share column widths.
-fn table_part(table: &BlockIr, rows: Range<usize>, first: bool, last: bool, ctx: &Ctx) -> Element<App> {
+fn table_part(
+    table: &BlockIr,
+    rows: Range<usize>,
+    first: bool,
+    last: bool,
+    ctx: &Ctx,
+) -> Element<App> {
     let columns = table_columns(table);
     let size = (ctx.typo.size * 0.875).round();
     let total = table.rows.len();
@@ -845,16 +900,18 @@ fn image_block(image: &InlineIr, key: String, ctx: &Ctx) -> Element<App> {
         Some(img) => {
             let (w, h) = (img.width() as f32, img.height() as f32);
             let width = image_width(w, ctx.typo.measure);
-            let mut parts: Vec<Element<App>> = vec![vstack![]
-                .width(width)
-                .height(width * h / w.max(1.))
-                .background_image(img.clone().background().fit(ImageFit::Contain))
-                .rounded(10.)
-                .clip_contents(true)
-                .border_color(ColorToken::Border)
-                .border_width(1.)
-                .accessible_label(if alt.is_empty() { "Image" } else { alt })
-                .into()];
+            let mut parts: Vec<Element<App>> = vec![
+                vstack![]
+                    .width(width)
+                    .height(width * h / w.max(1.))
+                    .background_image(img.clone().background().fit(ImageFit::Contain))
+                    .rounded(10.)
+                    .clip_contents(true)
+                    .border_color(ColorToken::Border)
+                    .border_width(1.)
+                    .accessible_label(if alt.is_empty() { "Image" } else { alt })
+                    .into(),
+            ];
             if !alt.is_empty() {
                 parts.push(
                     text(alt)
@@ -871,11 +928,14 @@ fn image_block(image: &InlineIr, key: String, ctx: &Ctx) -> Element<App> {
                 .padding(6., Edge::Vertical)
                 .into()
         }
-        None => text(format!("[image: {}]", if alt.is_empty() { url } else { alt }))
-            .key(key)
-            .font_size(13.)
-            .color(ColorToken::Muted)
-            .into(),
+        None => text(format!(
+            "[image: {}]",
+            if alt.is_empty() { url } else { alt }
+        ))
+        .key(key)
+        .font_size(13.)
+        .color(ColorToken::Muted)
+        .into(),
     }
 }
 
@@ -1006,9 +1066,30 @@ fn collect<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String,
         match inline.kind.as_str() {
             // Soft line breaks inside a paragraph are spaces.
             "text" => out.push((text.replace('\n', " "), style)),
-            "strong" => collect(&inline.children, Style { bold: true, ..style }, out),
-            "emphasis" => collect(&inline.children, Style { italic: true, ..style }, out),
-            "delete" => collect(&inline.children, Style { strike: true, ..style }, out),
+            "strong" => collect(
+                &inline.children,
+                Style {
+                    bold: true,
+                    ..style
+                },
+                out,
+            ),
+            "emphasis" => collect(
+                &inline.children,
+                Style {
+                    italic: true,
+                    ..style
+                },
+                out,
+            ),
+            "delete" => collect(
+                &inline.children,
+                Style {
+                    strike: true,
+                    ..style
+                },
+                out,
+            ),
             "link" => collect(
                 &inline.children,
                 Style {
@@ -1020,7 +1101,10 @@ fn collect<'a>(inlines: &'a [InlineIr], style: Style<'a>, out: &mut Vec<(String,
             // Narrow no-break spaces pad the code background on both sides.
             "code" | "math" => out.push((
                 format!("\u{202F}{text}\u{202F}"),
-                Style { code: true, ..style },
+                Style {
+                    code: true,
+                    ..style
+                },
             )),
             "hard_break" => out.push(("\n".into(), style)),
             "image" => out.push((
@@ -1081,7 +1165,10 @@ pub fn word_count(blocks: &[BlockIr]) -> usize {
     fn inlines(list: &[InlineIr]) -> usize {
         list.iter()
             .map(|i| {
-                i.text.as_deref().map_or(0, |t| t.split_whitespace().count()) + inlines(&i.children)
+                i.text
+                    .as_deref()
+                    .map_or(0, |t| t.split_whitespace().count())
+                    + inlines(&i.children)
             })
             .sum()
     }
@@ -1089,9 +1176,14 @@ pub fn word_count(blocks: &[BlockIr]) -> usize {
         .iter()
         .map(|b| {
             inlines(&b.inlines)
-                + b.code.as_deref().map_or(0, |c| c.split_whitespace().count())
+                + b.code
+                    .as_deref()
+                    .map_or(0, |c| c.split_whitespace().count())
                 + word_count(&b.children)
-                + b.items.iter().map(|i| word_count(&i.children)).sum::<usize>()
+                + b.items
+                    .iter()
+                    .map(|i| word_count(&i.children))
+                    .sum::<usize>()
                 + b.rows
                     .iter()
                     .chain([&b.headers])
@@ -1140,7 +1232,13 @@ fn clip(text: &str, max: usize) -> &str {
 pub fn key_of(id: &str) -> String {
     let key: String = id
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .take(110)
         .collect();
     if key.is_empty() { "block".into() } else { key }
