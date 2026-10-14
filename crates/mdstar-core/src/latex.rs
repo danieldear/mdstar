@@ -212,8 +212,33 @@ fn superscript_character(character: char) -> Option<char> {
         '−' | '-' => '⁻',
         '(' => '⁽',
         ')' => '⁾',
-        'n' => 'ⁿ',
+        '=' => '⁼',
+        'a' => 'ᵃ',
+        'b' => 'ᵇ',
+        'c' => 'ᶜ',
+        'd' => 'ᵈ',
+        'e' => 'ᵉ',
+        'f' => 'ᶠ',
+        'g' => 'ᵍ',
+        'h' => 'ʰ',
         'i' => 'ⁱ',
+        'j' => 'ʲ',
+        'k' => 'ᵏ',
+        'l' => 'ˡ',
+        'm' => 'ᵐ',
+        'n' => 'ⁿ',
+        'o' => 'ᵒ',
+        'p' => 'ᵖ',
+        'r' => 'ʳ',
+        's' => 'ˢ',
+        't' => 'ᵗ',
+        'u' => 'ᵘ',
+        'v' => 'ᵛ',
+        'w' => 'ʷ',
+        'x' => 'ˣ',
+        'y' => 'ʸ',
+        'z' => 'ᶻ',
+        'T' => 'ᵀ',
         _ => return None,
     })
 }
@@ -234,11 +259,21 @@ fn subscript_character(character: char) -> Option<char> {
         '−' | '-' => '₋',
         '(' => '₍',
         ')' => '₎',
+        '=' => '₌',
         'a' => 'ₐ',
         'e' => 'ₑ',
+        'h' => 'ₕ',
         'i' => 'ᵢ',
+        'j' => 'ⱼ',
+        'k' => 'ₖ',
+        'l' => 'ₗ',
+        'm' => 'ₘ',
+        'n' => 'ₙ',
         'o' => 'ₒ',
+        'p' => 'ₚ',
         'r' => 'ᵣ',
+        's' => 'ₛ',
+        't' => 'ₜ',
         'u' => 'ᵤ',
         'v' => 'ᵥ',
         'x' => 'ₓ',
@@ -257,6 +292,12 @@ mod tests {
             to_unicode(r"\frac{1}{\sqrt{2\pi\sigma^2}}"),
             "(1)⁄(√(2πσ²))"
         );
-        assert_eq!(to_unicode(r"\sum_{i=1}^{n} x_i^2"), "∑_(i=1)ⁿ xᵢ²");
+        assert_eq!(to_unicode(r"\sum_{i=1}^{n} x_i^2"), "∑ᵢ₌₁ⁿ xᵢ²");
+        assert_eq!(to_unicode(r"x_{max}^{T}"), "xₘₐₓᵀ");
+        assert_eq!(
+            to_unicode(r"y_{b}"),
+            "y_(b)",
+            "scripts Unicode lacks stay readable"
+        );
     }
 }
