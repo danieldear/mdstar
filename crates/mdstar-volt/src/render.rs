@@ -147,6 +147,8 @@ pub struct Ctx<'a> {
     pub find: Option<Highlight<'a>>,
     /// The row whose context menu is open, and where.
     pub menu: Option<(usize, [f32; 2])>,
+    /// Interactive controls such as Copy buttons; off for printed pages.
+    pub controls: bool,
 }
 
 /// One row of the virtualised document.
@@ -804,34 +806,41 @@ fn code_header(block: &BlockIr, ctx: &Ctx) -> Element<App> {
     } else {
         block.language.as_deref().unwrap_or("text")
     };
-    hstack![
+    let mut parts: Vec<Element<App>> = vec![
         text(language.to_uppercase())
             .font_size(10.5)
             .font_weight(600)
             .letter_spacing(0.06)
             .color(ColorToken::Muted)
-            .selectable(false),
-        spacer(),
-        button(if copied { "Copied" } else { "Copy" })
-            .key(format!("{key}-copy"))
-            .variant(ButtonVariant::Ghost)
-            .size(ControlSize::Small)
-            .font_size(12.)
-            .color(if copied {
-                ColorToken::Success
-            } else {
-                ColorToken::Muted
-            })
-            .on_click(move |app: &mut App| app.copy(&source, Some(id.clone()))),
-    ]
-    .height(CODE_HEADER)
-    .padding(14., Edge::Left)
-    .padding(6., Edge::Right)
-    .align(Align::Center)
-    .border_sides(Sides::BOTTOM)
-    .border_color(ColorToken::Border)
-    .border_width(1.)
-    .into()
+            .selectable(false)
+            .into(),
+        spacer().into(),
+    ];
+    if ctx.controls {
+        parts.push(
+            button(if copied { "Copied" } else { "Copy" })
+                .key(format!("{key}-copy"))
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Small)
+                .font_size(12.)
+                .color(if copied {
+                    ColorToken::Success
+                } else {
+                    ColorToken::Muted
+                })
+                .on_click(move |app: &mut App| app.copy(&source, Some(id.clone())))
+                .into(),
+        );
+    }
+    hstack(parts)
+        .height(CODE_HEADER)
+        .padding(14., Edge::Left)
+        .padding(6., Edge::Right)
+        .align(Align::Center)
+        .border_sides(Sides::BOTTOM)
+        .border_color(ColorToken::Border)
+        .border_width(1.)
+        .into()
 }
 
 fn code_part(
@@ -1468,6 +1477,7 @@ mod tests {
             },
             find: Some(Highlight::new(&needle, None, "#FF0", "#F80")),
             menu: None,
+            controls: true,
         };
         let mut shown = 0;
         for i in 0..units.len() {

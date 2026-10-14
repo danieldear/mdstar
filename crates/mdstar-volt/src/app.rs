@@ -1573,7 +1573,7 @@ fn same_images(a: &DocumentIr, b: &DocumentIr) -> bool {
 }
 
 /// Read and prepare a document of any supported kind.
-fn load(path: &Path) -> Result<Doc, String> {
+pub fn load(path: &Path) -> Result<Doc, String> {
     let name = file_name(path);
     let kind = workspace::kind(path).unwrap_or(FileKind::Code("text"));
     if kind == FileKind::Image {

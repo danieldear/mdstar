@@ -5,19 +5,9 @@
 //! mdstar-volt FILE.md --snapshot out.png [--size 1100x800] [--scale 2] [--theme dark]
 //! ```
 
-mod app;
-mod cli;
-mod compose;
-mod diagram;
-mod find;
-mod highlight;
 #[cfg(target_os = "macos")]
-mod macos;
-mod render;
-mod settings;
-mod terminal;
-mod view;
-mod workspace;
+use mdstar_volt::macos;
+use mdstar_volt::{App, app, cli, export, settings, view};
 
 use std::path::{Path, PathBuf};
 
@@ -31,11 +21,8 @@ use volt_ui_kit::{
     },
 };
 
-pub use app::App;
 use app::Mode;
 use settings::{Appearance, Settings, SidebarTab};
-
-pub const MARKDOWN: [&str; 5] = ["md", "markdown", "mdown", "mkd", "txt"];
 
 fn theme(app: &App, system: ThemeMode) -> UiTheme {
     app.system_dark.set(!matches!(system, ThemeMode::Light));
@@ -334,6 +321,8 @@ struct Args {
     popover: bool,
     /// Snapshot only: hover the element with this key (shows tooltips).
     hover: Option<String>,
+    /// Write the first file as PDF pages here instead of opening a window.
+    pdf: Option<PathBuf>,
 }
 
 fn args() -> Result<Args, String> {
@@ -352,6 +341,7 @@ fn args() -> Result<Args, String> {
         select_all: false,
         popover: false,
         hover: None,
+        pdf: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -365,6 +355,7 @@ fn args() -> Result<Args, String> {
                 })
             }
             "--snapshot" => a.snapshot = it.next().map(PathBuf::from),
+            "--pdf" => a.pdf = it.next().map(PathBuf::from),
             "--size" => {
                 let v = it.next().ok_or("--size takes WIDTHxHEIGHT")?;
                 let (w, h) = v.split_once('x').ok_or("--size takes WIDTHxHEIGHT")?;
@@ -517,14 +508,21 @@ fn snapshot(
     Ok(())
 }
 
-/// The app's bundle identifier, from `[package.metadata.volt.bundle]`.
-const BUNDLE_ID: &str = "dev.mdstar.volt";
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli::invoked_as_md(std::env::args_os().next().as_deref()) {
         cli::main();
     }
     let args = args()?;
+    if let Some(out) = &args.pdf {
+        let file = args.files.first().ok_or("--pdf needs a file to export")?;
+        let options = export::Options {
+            dark: matches!(args.appearance, Some(Appearance::Dark)),
+            ..export::Options::default()
+        };
+        std::fs::write(out, export::pdf(file, options)?)?;
+        println!("Exported {} to {}", file.display(), out.display());
+        return Ok(());
+    }
     let snapshot_path = args.snapshot.clone();
     // Snapshots never read or write the user's settings.
     let settings_path = snapshot_path
@@ -618,6 +616,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use app::{LinkAction, link_action};
+    use mdstar_volt::{diagram, render};
 
     #[test]
     fn narrow_panes_tighten_margins_and_fit_diagrams() {

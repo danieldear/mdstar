@@ -1358,6 +1358,7 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
             Some((MenuTarget::Row(row), at)) => Some((*row, *at)),
             _ => None,
         },
+        controls: true,
     };
     let estimates: Vec<f32> = (0..units.len())
         .map(|i| render::estimate(&units, i, &doc.images, &ctx.typo))

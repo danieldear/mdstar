@@ -24,6 +24,21 @@ md --plain README.md      # print the rendered document
 md --app README.md        # open it in the app
 ```
 
+## Quick Look
+
+The app carries **MD Star Preview**, a Quick Look extension: Finder's
+Space-bar preview of Markdown files is drawn by the app's own renderer
+(diagrams, math, emoji, footnotes) and shown as PDF pages. It is built from
+`src/preview.rs` and declared under `[[package.metadata.volt.bundle.extensions]]`.
+When another installed app also previews Markdown, choose MD Star Preview in
+System Settings → General → Login Items & Extensions → Quick Look.
+
+The same pages can be written to a file:
+
+```sh
+mdstar-volt notes.md --pdf notes.pdf      # add --theme dark for dark pages
+```
+
 ## Packaging
 
 The app bundle, its document types and its signing are described in

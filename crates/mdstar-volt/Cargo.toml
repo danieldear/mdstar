@@ -15,6 +15,11 @@ publish = false
 name = "mdstar-volt"
 path = "src/main.rs"
 
+# The Quick Look extension: Finder previews drawn by the app's renderer.
+[[bin]]
+name = "mdstar-preview"
+path = "src/preview.rs"
+
 # `cargo volt bundle` builds MD Star.app from this; `cargo volt release`
 # signs it with Developer ID, notarizes it and builds a disk image.
 [package.metadata.volt.bundle]
@@ -27,6 +32,18 @@ copyright = "MD Star contributors. MIT OR Apache-2.0."
 notary-profile = "mdstar"
 # The terminal viewer: Contents/MacOS/md runs `md` (see src/cli.rs).
 aliases = ["md"]
+
+# Finder's Space-bar preview, drawn by the app's renderer (src/preview.rs).
+[[package.metadata.volt.bundle.extensions]]
+name = "MD Star Preview"
+identifier = "dev.mdstar.volt.preview"
+binary = "mdstar-preview"
+point = "com.apple.quicklook.preview"
+principal-class = "MDStarPreviewProvider"
+[package.metadata.volt.bundle.extensions.attributes]
+QLIsDataBasedPreview = true
+QLSupportsSearchableItems = false
+QLSupportedContentTypes = ["net.daringfireball.markdown", "public.markdown"]
 
 # Markdown is ours by default.
 [[package.metadata.volt.bundle.document-types]]
@@ -71,6 +88,7 @@ content-types = ["public.folder"]
 mdstar-core = { path = "../mdstar-core" }
 mermaid-text = "0.16.1"
 unicode-width = "0.2"
+miniz_oxide = "0.8"
 anyhow = "1.0.100"
 clap = { version = "4.5.40", features = ["derive"] }
 shell-words = "1.1.0"
@@ -86,7 +104,8 @@ volt-ui-kit = { path = "../../../rust/volt-ui-kit", features = ["native-gpu", "n
 # Finder "Open With" and double-click: AppKit hands the app file URLs.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
-objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSURL", "NSAttributedString", "NSGeometry", "NSObject"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSString", "NSURL", "NSAttributedString", "NSGeometry", "NSObject"] }
+block2 = "0.6"
 # Native context menus with Look Up, Share, Speech and Services.
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSColor", "NSColorSpace", "NSEvent", "NSMenu", "NSMenuItem", "NSPasteboard", "NSResponder", "NSSharingService", "NSSpeechSynthesizer", "NSView", "NSWindow"] }
 
