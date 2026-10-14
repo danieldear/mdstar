@@ -91,3 +91,12 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# A smaller app: 9.8 MB per architecture instead of 20.6 MB, for rendering
+# about 3% slower (an 83,000-line document) and slower release builds.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
