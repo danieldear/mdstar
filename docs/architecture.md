@@ -1,111 +1,62 @@
 # Architecture
 
-## Goals
+## Current product
 
-- Keep one semantic Markdown model across desktop, CLI, and system adapters.
-- Keep platform integration thin and testable.
-- Ship a small native app without a JavaScript build pipeline.
-- Maintain a clean public repository suitable for outside contributors.
-
-## Current Runtime Topology
+MD Star's desktop app, terminal viewer/editor, and Quick Look provider are Rust.
+There is no active Tauri frontend, Swift app, or Swift/Rust FFI bridge.
 
 ```text
-                        +----------------------+
-                        | mdstar-core        |
-                        | parse + semantic IR  |
-                        | diagnostics          |
-                        +----------+-----------+
-                                   |
-              +--------------------+--------------------+
-              |                                         |
-              v                                         v
-    +--------------------------+              +----------------------+
-    | mdstar-render-terminal |              | mdstar-render-html |
-    | mdansi + Mermaid text    |              | preview HTML         |
-    +------------+-------------+              +----------+-----------+
-                 |                                       |
-                 v                                       v
-        +----------------+                      +----------------+
-        | md CLI / TUI   |                      | Tauri desktop  |
-        | mdstar-app   |                      | mdstar-app   |
-        +----------------+                      +----------------+
+Markdown files
+     |
+     v
+mdstar-core: parser + semantic DocumentIR + diagnostics
+     |
+     +------------------------------+
+     |                              |
+     v                              v
+mdstar-volt                     mdstar-render-html
+     |                         HTML export library
+     +-- native Volt UI Kit reader/editor
+     |     workspace tree, tabs, find, themes, live preview
+     +-- md CLI/TUI (ratatui + terminal renderer)
+     +-- PDF renderer/export
+     `-- mdstar-preview: macOS Quick Look extension
 ```
 
-`mdstar-app` is the active product binary. It runs as a CLI in terminal
-contexts and as a Tauri desktop app when launched with `--app`, from Finder, or
-from inside the macOS `.app` bundle.
+## Build boundaries
 
-## Workspace Topology
+The root Cargo workspace contains `mdstar-core` and `mdstar-render-html`.
+`crates/mdstar-volt` is a separate workspace with its own lockfile because it
+consumes `../../../rust/volt-ui-kit` as a path dependency. GitHub workflows
+fetch the kit into that relative location at a pinned commit.
+Run both workspaces' tests; root `cargo test --workspace` alone does not test
+the application.
 
-```text
-.
-+-- crates/
-|   +-- mdstar-core/
-|   +-- mdstar-render-terminal/
-|   +-- mdstar-render-html/
-|   +-- mdstar-app/
-|   +-- mdstar-cli/        legacy crate, retained for reference
-|   `-- mdstar-ffi/
-+-- docs/
-+-- tests/fixtures/
-`-- .github/workflows/
-```
+## Native application
 
-## Core Contracts
+Paths below are relative to `crates/mdstar-volt`:
 
-- `mdstar-core` parses source and returns a `Document` plus diagnostics.
-- `mdstar-render-terminal` renders Markdown source for terminal output,
-  including Mermaid preprocessing.
-- `mdstar-render-html` renders semantic HTML for the desktop preview.
-- `mdstar-ffi` exposes a minimal C ABI for future system integrations.
+- `src/main.rs`: startup, command registry, menus, event loop, native window.
+- `src/app.rs`: document state, tabs/history, edits, persistence, external changes.
+- `src/workspace.rs`: directory scanning and file tree.
+- `src/view.rs`, `src/render.rs`: widget composition and document rendering.
+- `src/compose.rs`, `src/find.rs`, `src/highlight.rs`: editing, search, syntax styling.
+- `src/diagram.rs`: Mermaid diagram rendering.
+- `src/export.rs`: paginated PDF rendering shared with Quick Look.
+- `src/cli.rs`, `src/terminal.rs`: terminal invocation, viewer/editor.
+- `src/macos.rs`: AppKit integration (file opening, native menus and services).
+- `src/preview.rs`: Quick Look provider entry point.
 
-## Desktop Flow
+The bundle's `Contents/MacOS/md` alias selects terminal mode; `md --app` opens
+the native GUI. The Quick Look extension is nested inside the application.
 
-```text
-Finder/Open With/CLI flag/dialog
-   |
-   v
-Tauri backend render_file/render_source
-   |
-   v
-mdstar-core -> mdstar-render-html
-   |
-   v
-frontend preview + outline + metadata
-```
+## Distribution
 
-macOS "Open With" uses the Tauri `RunEvent::Opened` event. Startup file
-arguments are also captured so Linux/Windows-style launches can pass a file path
-to the GUI.
+`cargo volt` consumes `[package.metadata.volt.bundle]` in the app manifest.
+CI checks formatting, linting, tests and ad-hoc bundle assembly. Release builds
+use Developer ID signing, hardened runtime, notarization, stapling and Gatekeeper
+assessment for the app and DMG. See [release checklist](release-checklist.md).
 
-## CLI Flow
-
-```text
-md <path>
-   |
-   v
-read file -> mdstar-render-terminal -> stdout/pager or ratatui view
-```
-
-The TUI edit mode writes directly to disk and refreshes the rendered preview
-from the shared terminal renderer.
-
-## Packaging
-
-Tauri owns application packaging:
-
-```bash
-cd crates/mdstar-app
-cargo tauri build
-cargo tauri build --bundles dmg
-```
-
-The GitHub release workflow builds platform artifacts and attaches them to a
-draft release for version tags.
-
-## Release Risks
-
-- macOS signing/notarization is not configured yet.
-- Linux packages need validation on GitHub Actions runners.
-- Quick Look and Linux MIME registration are planned but not complete.
-- `install.sh` still needs the real GitHub owner/repository before public use.
+macOS Apple silicon is the shipping target. Cross-platform compilation is not
+proof of packaged desktop behavior. Installation, Finder integration, Quick Look
+and editing acceptance remain separate from automated tests.

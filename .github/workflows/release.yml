@@ -61,24 +61,18 @@ jobs:
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: |
-          keychain="$RUNNER_TEMP/release.keychain-db"
-          password=$(openssl rand -hex 24)
-          echo "::add-mask::$password"
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 3600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          echo "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
-          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          rm "$RUNNER_TEMP/certificate.p12"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          security default-keychain -s "$keychain"
-          xcrun notarytool store-credentials mdstar --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$keychain"
-          echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+        run: bash "$GITHUB_WORKSPACE/scripts/setup-macos-signing.sh"
 
       - name: Build, sign, notarize and staple
         run: cargo volt release
+
+      - name: Verify stapled artifacts
+        run: |
+          codesign --verify --deep --strict --verbose=2 "target/release/bundle/MD Star.app"
+          xcrun stapler validate "target/release/bundle/MD Star.app"
+          for image in target/release/bundle/MD-Star-*.dmg; do
+            xcrun stapler validate "$image"
+          done
 
       - name: Checksum
         run: |
@@ -106,4 +100,7 @@ jobs:
       - name: Remove the keychain
         if: always()
         run: |
-          if [ -n "${KEYCHAIN:-}" ]; then security delete-keychain "$KEYCHAIN"; fi
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          if [ -n "${KEYCHAIN:-}" ] && [ -f "$KEYCHAIN" ]; then
+            security delete-keychain "$KEYCHAIN"
+          fi
