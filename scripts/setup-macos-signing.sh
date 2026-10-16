@@ -4,7 +4,14 @@ set -euo pipefail
 
 for name in CERTIFICATE_P12 CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_PASSWORD TEAM_ID RUNNER_TEMP GITHUB_ENV; do
   if [ -z "${!name:-}" ]; then
-    echo "::error::Required signing input $name is empty. Check the repository Actions secrets."
+    case "$name" in
+      CERTIFICATE_P12) source="repository Actions secret MACOS_CERTIFICATE_P12" ;;
+      CERTIFICATE_PASSWORD) source="repository Actions secret MACOS_CERTIFICATE_PASSWORD" ;;
+      APPLE_ID|APPLE_APP_PASSWORD) source="repository Actions secret $name" ;;
+      TEAM_ID) source="workflow env setting TEAM_ID" ;;
+      RUNNER_TEMP|GITHUB_ENV) source="GitHub Actions runner environment variable $name" ;;
+    esac
+    echo "::error::Required signing input is empty. Check $source."
     exit 1
   fi
 done

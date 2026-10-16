@@ -49,11 +49,30 @@ esac
             return result, exported, called
 
     def test_each_missing_secret_fails_before_keychain_access(self):
-        for name in ['CERTIFICATE_P12', 'CERTIFICATE_PASSWORD', 'APPLE_ID', 'APPLE_APP_PASSWORD']:
+        secrets = {
+            'CERTIFICATE_P12': 'MACOS_CERTIFICATE_P12',
+            'CERTIFICATE_PASSWORD': 'MACOS_CERTIFICATE_PASSWORD',
+            'APPLE_ID': 'APPLE_ID',
+            'APPLE_APP_PASSWORD': 'APPLE_APP_PASSWORD',
+        }
+        for name, secret in secrets.items():
             with self.subTest(name=name):
                 result, _, called = self.run_setup(missing=name)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(name, result.stdout)
+                self.assertIn(f"repository Actions secret {secret}", result.stdout)
+                self.assertEqual(called, '')
+
+    def test_missing_workflow_and_runner_inputs_are_not_called_secrets(self):
+        for name, source in [
+            ('TEAM_ID', 'workflow env setting'),
+            ('RUNNER_TEMP', 'GitHub Actions runner environment variable'),
+            ('GITHUB_ENV', 'GitHub Actions runner environment variable'),
+        ]:
+            with self.subTest(name=name):
+                result, _, called = self.run_setup(missing=name)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"{source} {name}", result.stdout)
+                self.assertNotIn('secret', result.stdout)
                 self.assertEqual(called, '')
 
     def test_invalid_base64_is_rejected(self):
