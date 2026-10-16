@@ -36,6 +36,9 @@ jobs:
       - name: Tests
         run: cargo test --workspace --all-features
 
+      - name: Release signing regression tests
+        run: python3 -B -m unittest discover -s tests/release -v
+
   app:
     name: App (macOS)
     # Pull requests from forks get no secrets, so they cannot fetch the kit.
@@ -78,6 +81,10 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
+
+      - name: Release signing regression tests (macOS)
+        working-directory: .
+        run: python3 -B -m unittest discover -s tests/release -v
 
       - name: Install cargo volt
         run: cargo install --locked --path "$GITHUB_WORKSPACE/../rust/volt-ui-kit" --features dev-tools --bin cargo-volt

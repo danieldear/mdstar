@@ -1,123 +1,76 @@
-# Release Checklist
+# Release checklist
 
-Releases are macOS-only for now:
+## Current release target
 
-| Artifact | Contents |
-| --- | --- |
-| `MD-Star-<version>-universal.dmg` | Native SwiftUI reader with the `md` CLI embedded in the bundle |
-| `md-<tag>-universal-apple-darwin.tar.gz` | Standalone `md` CLI |
+MD Star is a native Rust/Volt UI Kit application. Releases target **Apple
+silicon only**, not a universal Swift or Tauri application.
 
-The Tauri desktop app is no longer part of the release; macOS ships the native
-reader in `macos/MDStarNative`. Linux and Windows builds are deferred — `md`
-still links Tauri, so those targets need the GTK/WebKit toolchain and have not
-been validated in CI.
+```text
+version tag (v<crates/mdstar-volt version>)
+  -> fetch pinned Volt UI Kit
+  -> import Developer ID certificate + private key
+  -> validate notarization credentials
+  -> cargo volt release
+       -> build app + Quick Look extension
+       -> sign nested extension, then app (hardened runtime)
+       -> notarize app, staple ticket, assess with Gatekeeper
+       -> create/sign DMG, notarize/staple/assess DMG
+  -> independently validate signatures and stapled tickets
+  -> upload DMG + SHA256SUMS.txt
+  -> create DRAFT GitHub release (tag runs only)
+```
 
-## Repository
+## Prerequisites
 
-- `install.sh` defaults to `REPO=danieldear/mdstar`; override with `REPO=` for forks.
-- Confirm `docs/index.html` is enabled as the GitHub Pages entry point if Pages is used.
+- App tests and library tests pass; CI builds the app and Quick Look bundle.
+- `VOLT_UI_KIT_REF` matches in CI and release workflows.
+- `VOLT_UI_KIT_TOKEN` can read the pinned kit repository.
+- `MACOS_CERTIFICATE_P12` is **nonempty base64** of a password-protected PKCS#12
+  export containing the Developer ID Application certificate **and private key**.
+- `MACOS_CERTIFICATE_PASSWORD` matches that export.
+- `APPLE_ID` and `APPLE_APP_PASSWORD` can notarize for team `A822K85XUW`.
+- See [the app README](../crates/mdstar-volt/README.md) for secret setup.
 
-## Local Verification
+Secret names appearing in `gh secret list` do not establish that their values
+are usable. Never print secrets or enable shell tracing during setup.
+`scripts/setup-macos-signing.sh` fails early on empty inputs, checks the imported
+identity's team, and registers temporary-keychain cleanup before import.
 
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+## Validation
+
+```sh
 cargo test --workspace --all-features
+cargo test --manifest-path crates/mdstar-volt/Cargo.toml --locked
+python3 -B -m unittest discover -s tests/release -v
+cd crates/mdstar-volt
+cargo volt release --dry-run
 ```
 
-Native app:
+After a release build:
 
-```bash
-cargo build -p mdstar-ffi
-cd macos/MDStarNative && swift build && swift test
+```sh
+codesign --verify --deep --strict --verbose=2 'target/release/bundle/MD Star.app'
+xcrun stapler validate 'target/release/bundle/MD Star.app'
+spctl --assess --type execute --verbose 'target/release/bundle/MD Star.app'
+xcrun stapler validate target/release/bundle/MD-Star-*.dmg
 ```
 
-Release artifact:
+- Verify the bundle version matches the tag; an older locally notarized app
+  does not validate a newer release.
+- Download the GitHub-built DMG and test installation, launch, Finder Open With,
+  Quick Look, editing/saving, and `md` linking before publishing the draft.
+- Confirm the embedded Quick Look extension is signed and present.
+- The workflow publishes no standalone CLI tarballs, Linux packages, or Windows
+  installers. Use `install.sh --link-app` with an installed macOS app.
 
-```bash
-./script/package_macos.sh --arch universal --dmg
-lipo -archs "dist/MD Star.app/Contents/MacOS/MDStarNative"   # expect: x86_64 arm64
-```
+## Diagnosing failures
 
-## Code Signing and Notarization
-
-An unsigned build runs on the machine that produced it, but any copy that is
-downloaded or transferred to another Mac carries a quarantine flag and **will
-not launch**. This is not a warning the user can click through:
-
-- **macOS 15 removed the Control-click > Open bypass.** Advice to "right-click
-  and choose Open" no longer works. The recipient must open **System Settings >
-  Privacy & Security**, find the blocked app near the bottom, and choose **Open
-  Anyway**, or run:
-  ```bash
-  xattr -dr com.apple.quarantine "/Applications/MD Star.app"
-  ```
-- Verify what Gatekeeper actually thinks with `spctl -a -t open \
-  --context context:primary-signature -v <file>.dmg`. An unsigned artifact
-  reports `rejected — source=no usable signature`.
-
-Treat publishing an unsigned build as shipping a broken first-run experience.
-To avoid it you need an Apple Developer Program membership and a
-*Developer ID Application* certificate.
-
-Locally:
-
-```bash
-CODESIGN_IDENTITY="Developer ID Application: NAME (TEAMID)" \
-NOTARY_PROFILE=mdstar \
-./script/package_macos.sh --arch universal --dmg
-```
-
-In CI, add these repository secrets — the release workflow skips signing when
-they are absent:
-
-| Secret | Purpose |
-| --- | --- |
-| `MACOS_CERTIFICATE` | base64 of the `.p12` certificate |
-| `MACOS_CERTIFICATE_PWD` | password for the `.p12` |
-| `MACOS_SIGN_IDENTITY` | e.g. `Developer ID Application: NAME (TEAMID)` |
-| `NOTARY_APPLE_ID` | Apple ID for notarization |
-| `NOTARY_TEAM_ID` | Developer team ID |
-| `NOTARY_PASSWORD` | app-specific password |
-
-## macOS Verification
-
-Verify on a **second Mac**, not the build machine. Locally built apps are never
-quarantined, so the build machine cannot reproduce the experience a downloaded
-copy gives — an unsigned release passes every local check and still fails for
-everyone who downloads it.
-
-- Install the DMG by dragging **MD Star** to Applications.
-- Only one `MD Star.app` should exist. An older Tauri build installed at the same
-  path makes LaunchServices resolve the name to the wrong bundle; verify with:
-  ```bash
-  /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
-    "/Applications/MD Star.app/Contents/Info.plist"   # expect dev.mdstar.native
-  ```
-- Right-click a `.md` file and choose Open With -> MD Star; confirm it opens.
-- Confirm the file tree, outline, tabs, find (Command-F), and Split/View all work.
-- Run `./install.sh --link-app` and confirm `md --help` resolves.
-
-## Known Limitations
-
-- The `md` binary still links Tauri, so `md --app` opens the legacy WebView GUI,
-  and building it on Linux needs the GTK/WebKit toolchain. Removing that
-  dependency is the prerequisite for restoring Linux and Windows releases.
-- DMG window styling needs Automation access to Finder. Without it the installer
-  is still valid, just unstyled; grant access in System Settings > Privacy &
-  Security > Automation and rebuild for the laid-out window.
-- Terminal output renders images as `![alt](url)` markup; no sixel/kitty image
-  protocol support.
-- Highlights and comments are not implemented; they need a TextKit-based reader.
-- Quick Look extension embedding/signing from `macos/MarkwellQuickLook` is deferred.
-- Linux MIME registration installer is deferred.
-
-## GitHub Release
-
-```bash
-git tag v0.1.0
-git push origin main
-git push origin v0.1.0
-```
-
-The workflow publishes a **draft** release. Review the artifacts, then publish.
+- Import failure: check certificate input, export password, and private key first.
+  This happens **before notarization** and is not an Apple rejection.
+- Credential validation failure: check the Apple ID, app-specific password, team,
+  and any developer-account agreement requirements.
+- Notarization rejection: use the submission ID reported by `cargo volt release`:
+  `xcrun notarytool log ID --keychain-profile mdstar`. Inspect Apple's actual log.
+- Do not move an existing release tag just to change workflow code. Validate a
+  fix using a branch's manual workflow run, then choose a new version/tag or an
+  explicitly approved recovery plan.
