@@ -865,6 +865,7 @@ mod tests {
         let mut files = vec![
             root.join("README.md"),
             root.join("tests/fixtures/sample.md"),
+            root.join("tests/fixtures/mermaid/extended.md"),
         ];
         if let Ok(dir) = std::fs::read_dir(root.join("docs")) {
             files.extend(

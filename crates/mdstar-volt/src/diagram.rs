@@ -4,8 +4,11 @@
 //! a layered layout in pixels (layers, crossing reduction, least-squares
 //! placement) and are drawn as vector shapes with smooth edges; sequence
 //! diagrams get lanes, messages, notes and blocks; pie charts use the kit's
-//! donut chart. Class and ER diagrams show `mermaid-text`'s own drawing.
+//! donut chart. Class and ER diagrams prefer the extended renderer below.
 //!
+//! Extended families (Gantt, timeline, mindmap, journey, etc.) use the same
+//! strict Rust SVG renderer as Volt Editor, rasterized offline into a bounded
+//! high-resolution image. No scripts or external image resources are loaded.
 //! Layouts are cached by source, so rebuilding a view does not redo them.
 
 use std::{
@@ -21,7 +24,10 @@ use mermaid_text::{
     sequence::{NoteAnchor, SequenceDiagram},
     types::{BarOrientation, Rgb},
 };
-use volt_ui_kit::{graphics::VectorPath, ui::prelude::*};
+use volt_ui_kit::{
+    graphics::{Image, VectorPath},
+    ui::prelude::*,
+};
 
 use crate::App;
 
@@ -47,6 +53,10 @@ pub enum Diagram {
     },
     /// `mermaid-text`'s Unicode drawing, for kinds without native drawing.
     Text(String),
+    Image {
+        image: Image,
+        size: [f32; 2],
+    },
     Error(String),
 }
 
@@ -64,7 +74,14 @@ pub fn diagram(source: &str) -> Rc<Diagram> {
         }
         let d = Rc::new(build(source));
         let mut cache = cache.borrow_mut();
-        if cache.len() > 64 {
+        let image_bytes: usize = cache
+            .values()
+            .map(|d| match d.as_ref() {
+                Diagram::Image { image, .. } => image.pixels().len(),
+                _ => 0,
+            })
+            .sum();
+        if cache.len() >= 64 || image_bytes >= 32 * 1024 * 1024 {
             cache.clear();
         }
         cache.insert(key, d.clone());
@@ -73,6 +90,88 @@ pub fn diagram(source: &str) -> Rc<Diagram> {
 }
 
 fn build(source: &str) -> Diagram {
+    if source.len() > 64 * 1024 {
+        return Diagram::Error("Diagram exceeds the 64 KiB source limit".into());
+    }
+    let native = build_native(source);
+    if matches!(native, Diagram::Error(_) | Diagram::Text(_)) {
+        match extended(source) {
+            Ok(d) => d,
+            // Retain existing text output when a legacy family cannot be
+            // converted; invalid input keeps the source/error card.
+            Err(e) if matches!(native, Diagram::Error(_)) => Diagram::Error(e),
+            Err(_) => native,
+        }
+    } else {
+        native
+    }
+}
+
+/// Match Volt Editor's strict parser, but keep raster work and cached memory
+/// bounded. A white canvas preserves label contrast even in a dark reader.
+fn extended(source: &str) -> Result<Diagram, String> {
+    use resvg::{tiny_skia, usvg};
+    let parsed = mermaid_rs_renderer::parse_mermaid_strict(source).map_err(|e| e.to_string())?;
+    if parsed.graph.nodes.len() > 256 || parsed.graph.edges.len() > 512 {
+        return Err("Diagram exceeds the safe node/edge limit".into());
+    }
+    if parsed.graph.gantt_tasks.len() > 256 {
+        return Err("Diagram exceeds the safe task limit".into());
+    }
+    if parsed.graph.kind == mermaid_rs_renderer::DiagramKind::Gantt
+        && parsed.graph.gantt_tasks.is_empty()
+    {
+        return Err("Gantt chart contains no valid tasks".into());
+    }
+    let theme = mermaid_rs_renderer::Theme::modern();
+    let layout = mermaid_rs_renderer::compute_layout(&parsed.graph, &theme, &Default::default());
+    let svg = mermaid_rs_renderer::render_svg(&layout, &theme, &Default::default());
+    if svg.len() > 2 * 1024 * 1024 || svg.contains("<foreignObject") || svg.contains("<image") {
+        return Err("Diagram contains unsupported or oversized SVG content".into());
+    }
+    thread_local! {
+        static FONTS: std::sync::Arc<usvg::fontdb::Database> = {
+            let mut fonts = usvg::fontdb::Database::new();
+            fonts.load_system_fonts();
+            std::sync::Arc::new(fonts)
+        };
+    }
+    let options = usvg::Options {
+        fontdb: FONTS.with(Clone::clone),
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..Default::default()
+    };
+    let tree = usvg::Tree::from_str(&svg, &options).map_err(|e| e.to_string())?;
+    let size = [tree.size().width(), tree.size().height()];
+    if size
+        .iter()
+        .any(|v| !v.is_finite() || *v <= 0. || *v > 20_000.)
+    {
+        return Err("Invalid or oversized diagram dimensions".into());
+    }
+    let scale = 2_f32.min((4_000_000. / (size[0] * size[1])).sqrt());
+    let mut pixels = tiny_skia::Pixmap::new(
+        (size[0] * scale).floor().max(1.) as u32,
+        (size[1] * scale).floor().max(1.) as u32,
+    )
+    .ok_or("Could not allocate diagram image")?;
+    pixels.fill(tiny_skia::Color::WHITE);
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixels.as_mut(),
+    );
+    // Opaque white background means these premultiplied pixels are also
+    // straight RGBA, as required by Image::from_rgba.
+    let image =
+        Image::from_rgba(pixels.width(), pixels.height(), pixels.take()).map_err(str::to_owned)?;
+    Ok(Diagram::Image { image, size })
+}
+
+fn build_native(source: &str) -> Diagram {
     let kind = match detect(source) {
         Ok(kind) => kind,
         Err(e) => return Diagram::Error(e.to_string()),
@@ -116,6 +215,7 @@ fn build(source: &str) -> Diagram {
 /// The natural size of a drawn diagram (text diagrams excluded).
 pub fn size(d: &Diagram) -> Option<[f32; 2]> {
     match d {
+        Diagram::Image { size, .. } => Some(*size),
         Diagram::Graph(g) => Some(g.size),
         Diagram::Sequence(s) => Some(s.size),
         Diagram::Pie { title, .. } => Some([360., 200. + if title.is_some() { 30. } else { 0. }]),
@@ -1408,6 +1508,12 @@ pub fn view(d: &Diagram, s: f32, mono: &str, mono_size: f32) -> Element<App> {
                 .align(Align::Center)
                 .into()
         }
+        Diagram::Image { image, size } => vstack![]
+            .width(size[0] * s)
+            .height(size[1] * s)
+            .background_image(image.clone().background().fit(ImageFit::Contain))
+            .accessible_label("Mermaid diagram")
+            .into(),
         Diagram::Text(art) => text(art.clone())
             .font_family(mono.to_owned())
             .font_size(mono_size)
@@ -1818,6 +1924,42 @@ mod tests {
         assert_eq!(p, vec![-10., 0., 10.]);
         let p = place(&[0., 50., 100.], &[10., 10.]);
         assert_eq!(p, vec![0., 50., 100.]);
+    }
+
+    #[test]
+    fn extended_mermaid_families_render_graphically() {
+        for source in [
+            "gantt\n  title Release plan\n  dateFormat YYYY-MM-DD\n  section Build\n  Implement :done, impl, 2026-10-01, 3d\n  Test :active, test, after impl, 2d\n  Ship :milestone, after test, 0d",
+            "timeline\n  title Releases\n  2025 : Prototype\n  2026 : Ship",
+            "mindmap\n  root((MD Star))\n    Reader\n    Editor",
+            "journey\n  title Release\n  section Build\n    Code: 5: Dev\n    Test: 4: Dev",
+        ] {
+            let d = build(source);
+            let Diagram::Image { image, .. } = &d else {
+                panic!("expected graphical Mermaid: {source}");
+            };
+            assert!(
+                image
+                    .pixels()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|p| p[..3] != [255, 255, 255]),
+                "diagram must contain visible ink, not just an empty canvas"
+            );
+            assert!(image.width() as u64 * image.height() as u64 <= 4_000_000);
+            assert!(size(&d).is_some());
+            let _ = view(&d, 1., "Menlo", 12.);
+        }
+    }
+
+    #[test]
+    fn extended_diagrams_keep_errors_and_source_limits() {
+        assert!(matches!(build("gantt\ninvalid task"), Diagram::Error(_)));
+        assert!(matches!(
+            build(&"x".repeat(64 * 1024 + 1)),
+            Diagram::Error(_)
+        ));
     }
 
     #[test]
