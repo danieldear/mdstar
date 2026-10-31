@@ -87,6 +87,9 @@ content-types = ["public.folder"]
 [dependencies]
 mdstar-core = { path = "../mdstar-core" }
 mermaid-text = "0.16.1"
+# Match Volt Editor for diagram families the terminal parser cannot draw.
+mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
+resvg = { version = "0.45.1", default-features = false, features = ["text", "system-fonts"] }
 unicode-width = "0.2"
 miniz_oxide = "0.8"
 anyhow = "1.0.100"

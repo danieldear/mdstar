@@ -24,6 +24,20 @@ md --plain README.md      # print the rendered document
 md --app README.md        # open it in the app
 ```
 
+## Mermaid diagrams
+
+Flowcharts, state, sequence and pie diagrams retain MD Star's native drawing.
+Gantt charts, timelines, mindmaps, user journeys, class/ER diagrams and other
+families supported by `mermaid-rs-renderer` 0.3.1 use the same strict parser as
+Volt Editor. They render offline through SVG into cached high-resolution images;
+no JavaScript, browser, or external image requests are used. These extended
+charts currently use a light canvas even in dark mode.
+
+Source/SVG size, graph size, raster allocation and cache memory are bounded.
+Invalid or unsupported syntax keeps the original code visible with an error.
+This is not a claim of complete Mermaid.js syntax compatibility.
+See `tests/fixtures/mermaid/extended.md` for examples.
+
 ## Quick Look
 
 The app carries **MD Star Preview**, a Quick Look extension: Finder's
