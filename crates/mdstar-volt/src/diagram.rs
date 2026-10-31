@@ -1941,7 +1941,9 @@ mod tests {
             assert!(
                 image
                     .pixels()
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .any(|p| p[..3] != [255, 255, 255]),
                 "diagram must contain visible ink, not just an empty canvas"
             );
