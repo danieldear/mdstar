@@ -217,8 +217,11 @@ pub fn diagram(source: &str) -> Rc<Diagram> {
 }
 
 fn build(source: &str) -> Diagram {
-    if source.len() > 64 * 1024 || source.lines().count() > 1024 {
+    if source.len() > 64 * 1024 {
         return Diagram::Error("Diagram exceeds the 64 KiB source limit".into());
+    }
+    if source.lines().count() > 1024 {
+        return Diagram::Error("Diagram exceeds the 1024-line source limit".into());
     }
     let mut depth = 0usize;
     for byte in source.bytes() {
