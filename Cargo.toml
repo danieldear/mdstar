@@ -3,9 +3,9 @@ members = [
   "crates/mdstar-core",
   "crates/mdstar-render-html",
 ]
-# The app builds on its own: it depends on a local Volt UI Kit checkout
-# until the kit is published.
-exclude = ["crates/mdstar-volt"]
+# Native rendering and the app depend on the local unpublished Volt UI Kit.
+# Keep core/HTML library CI independent of that private checkout.
+exclude = ["crates/mdstar-volt", "crates/mdstar-render-volt"]
 resolver = "2"
 
 [workspace.package]

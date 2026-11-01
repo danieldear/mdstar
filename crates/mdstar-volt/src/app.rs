@@ -51,6 +51,7 @@ pub enum Mode {
 /// Work finished off the UI thread.
 #[derive(Debug)]
 pub enum Msg {
+    MediaReady,
     /// Typing paused: save if no edit came after edit number `n`.
     Autosave(u64),
     /// Files changed on disk; `structural` when files appeared, went or
@@ -534,6 +535,17 @@ impl App {
 
     pub fn message(&mut self, msg: Msg) {
         match msg {
+            Msg::MediaReady => {
+                // Keep the lazy list's measured heights/anchor; mounted rows
+                // are remeasured as the ready media replaces its placeholder.
+                let current = self.find.as_ref().and_then(Find::current_hit);
+                self.recount();
+                if let (Some(current), Some(find)) = (current, self.find.as_mut())
+                    && let Some(i) = find.hits.iter().position(|h| *h == current)
+                {
+                    find.current = i;
+                }
+            }
             Msg::Autosave(n) if n == self.edits => {
                 self.save();
             }

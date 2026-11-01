@@ -603,6 +603,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .desktop(menus(), |_: &mut App, _| {})
         .messages(
             |app: &mut App, sender| {
+                let wake = sender.clone();
+                mdstar_volt::diagram::set_waker(std::sync::Arc::new(move || {
+                    let _ = wake.send(app::Msg::MediaReady);
+                }));
                 app.sender = Some(sender);
                 app.sync_watches();
             },

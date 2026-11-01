@@ -89,6 +89,9 @@ fn pages(doc: &Doc, o: Options) -> Result<Vec<Page>, String> {
         find: None,
         menu: None,
         controls: false,
+        presentation: crate::render::Presentation::Document,
+        media: Some(&crate::render::MEDIA),
+        on_link: None,
     };
     // Rows `range` of the document at their natural heights: inside a
     // scroll view nothing is squeezed to fit the viewport.

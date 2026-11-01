@@ -23,6 +23,7 @@ const TRAFFIC_LIGHTS: f32 = 78.;
 const ROW: f32 = 28.;
 
 pub fn view(app: &App) -> Element<App> {
+    crate::diagram::begin_frame();
     let clear = "#00000000".to_string();
     let main = vstack![
         toolbar(app),
@@ -1359,6 +1360,9 @@ fn document(app: &App, doc: &Doc) -> Element<App> {
             _ => None,
         },
         controls: true,
+        presentation: crate::render::Presentation::Document,
+        media: Some(&crate::render::MEDIA),
+        on_link: None,
     };
     let estimates: Vec<f32> = (0..units.len())
         .map(|i| render::estimate(&units, i, &doc.images, &ctx.typo))

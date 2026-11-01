@@ -19,6 +19,7 @@ compile and need packaging and testing before a release.
 +-- crates/
 |   +-- mdstar-core/         parser, semantic document IR, diagnostics, LaTeX to Unicode
 |   +-- mdstar-render-html/  Markdown to HTML (for export)
+|   +-- mdstar-render-volt/  shared native rendering for MD Star and Volt Editor
 |   `-- mdstar-volt/         the app and `md`: reader, editor, diagrams, terminal viewer
 +-- docs/                    project docs and static web page
 +-- tests/fixtures/          shared regression fixtures
@@ -55,7 +56,8 @@ Markdown input
    v
 mdstar-core (parser, document IR)
    |
-   +--> mdstar-volt: app renderer, Mermaid diagrams, `md` terminal renderer
+   +--> mdstar-render-volt: native units, rich text, code, tables and find mapping
+   |       `--> mdstar-volt / Volt Editor: app adapters and media backends
    |
    `--> mdstar-render-html: HTML output
 ```
@@ -75,3 +77,10 @@ Swift and Tauri apps.
 - dual licensed under MIT or Apache-2.0,
 - issue templates and pull request template included,
 - CI checks format, clippy, and tests.
+
+## Shared native rendering
+
+The reader now uses `mdstar-render-volt` through a thin application adapter. Volt
+Editor consumes that same crate while retaining its streaming/session shell and
+background math/diagram renderer; see [the shared-crate contract](crates/mdstar-render-volt/README.md).
+This source extraction is not a new packaged release or a claim of native UI acceptance.

@@ -1,0 +1,15 @@
+[package]
+name = "mdstar-render-volt"
+version = "0.1.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Shared native Markdown rendering for MD Star and Volt Editor"
+publish = false
+
+# Like the native reader, standalone until the toolkit is published.
+[workspace]
+resolver = "2"
+
+[dependencies]
+mdstar-core = { path = "../mdstar-core" }
+volt-ui-kit = { path = "../../../rust/volt-ui-kit", default-features = false, features = ["rust-ui"] }
