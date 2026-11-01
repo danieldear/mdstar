@@ -907,18 +907,62 @@ fn code_part<C: Host>(
         .language
         .as_deref()
         .unwrap_or(if block.kind == "math" { "latex" } else { "" });
-    let body = styled(
-        code,
-        syntax_runs(language, code, ctx.dark),
-        ctx,
-        &t.code_family,
-        &format!("{key}-text-{part}"),
-    )
-    .key(format!("{key}-text-{part}"))
-    .font_family(t.code_family.clone())
-    .font_size(code_size)
-    .line_height(1.55)
-    .no_wrap(ctx.code_view);
+    let runs = syntax_runs(language, code, ctx.dark);
+    let body = if ctx.presentation == Presentation::Conversation {
+        // Preserve chat's triple-click line selection without losing lexical
+        // context for multiline comments/strings. Each row stays a text leaf;
+        // the shared prose path still splits over-budget rows safely.
+        let (mut offset, mut run) = (0usize, 0usize);
+        let mut rows = Vec::new();
+        for (row, raw) in code.split_inclusive('\n').enumerate() {
+            let line = raw.strip_suffix('\n').unwrap_or(raw);
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            let end = offset + line.len();
+            while run < runs.len() && runs[run].0 <= offset {
+                run += 1;
+            }
+            let mut spans = Vec::new();
+            let mut at = offset;
+            while run < runs.len() && at < end {
+                let to = runs[run].0.min(end);
+                spans.push((to - offset, runs[run].1));
+                at = to;
+                if runs[run].0 <= end {
+                    run += 1;
+                }
+            }
+            rows.push(
+                styled(
+                    line,
+                    spans,
+                    ctx,
+                    &t.code_family,
+                    &format!("{key}-text-{part}-line-{row}"),
+                )
+                .key(format!("{key}-text-{part}-line-{row}"))
+                .min_height(code_size * 1.55),
+            );
+            offset += raw.len();
+        }
+        vstack(rows)
+            .align(Align::Stretch)
+            .gap(0., Axis::Vertical)
+            .into()
+    } else {
+        styled(
+            code,
+            runs,
+            ctx,
+            &t.code_family,
+            &format!("{key}-text-{part}"),
+        )
+    };
+    let body: Element<C> = body
+        .key(format!("{key}-text-{part}"))
+        .font_family(t.code_family.clone())
+        .font_size(code_size)
+        .line_height(1.55)
+        .no_wrap(ctx.code_view);
     let content: Element<C> = if ctx.code_view {
         // Line numbers in a gutter; code does not wrap, so rows line up.
         let lines = code.lines().count().max(1);
@@ -1628,12 +1672,10 @@ mod tests {
 
     #[test]
     fn long_prose_and_many_styles_build_without_truncation_or_span_overflow() {
-        fn shown(n: &volt_ui_kit::declarative::Node, out: &mut String) {
-            if n.kind == volt_ui_kit::declarative::Kind::Text {
-                out.push_str(n.text.as_deref().unwrap_or(""));
-            }
-            for child in &n.children {
-                shown(child, out);
+        struct Metrics;
+        impl volt_ui_kit::declarative::TextMetrics for Metrics {
+            fn measure(&mut self, _text: &str, _size: f32, _width: f32) -> [f32; 2] {
+                [100., 20.]
             }
         }
         let images = HashMap::new();
@@ -1675,13 +1717,22 @@ mod tests {
                 ..Default::default()
             });
         }
-        let (doc, _) = prose(&inlines, 14., &ctx, "prose")
+        let (doc, handlers) = prose(&inlines, 14., &ctx, "prose")
             .key("prose")
             .build()
             .unwrap()
             .into_parts();
-        let mut text = String::new();
-        shown(doc.root(), &mut text);
+        let bindings = volt_ui_kit::declarative::Bindings::default();
+        let mut runtime =
+            volt_ui_kit::declarative::Runtime::new(doc, &handlers, &bindings).unwrap();
+        runtime
+            .layout(
+                volt_ui_kit::Viewport::new(800., 800., 1.).unwrap(),
+                &bindings,
+                &mut Metrics,
+            )
+            .unwrap();
+        let text = runtime.boxes().iter().map(|b| b.text()).collect::<String>();
         assert_eq!(text, "αβ ".repeat(2_000));
     }
 }

@@ -492,8 +492,7 @@ fn build_native(source: &str, max_nodes: usize, max_edges: usize) -> Diagram {
     parsed.unwrap_or_else(|e| Diagram::Error(e.to_string()))
 }
 
-/// The natural size of a drawn diagram (text diagrams excluded).
-/// Bounded cache accounting for host caches (not just vector paths).
+/// Approximate memory cost in bytes for host cache accounting (not just vector paths).
 pub fn memory_cost(d: &Diagram) -> usize {
     match d {
         Diagram::Image { image, .. } => image.pixels().len(),
@@ -538,6 +537,7 @@ fn remove_placeholder_fonts(fonts: &mut resvg::usvg::fontdb::Database) {
     }
 }
 
+/// The natural size of a drawn diagram (text diagrams excluded).
 pub fn size(d: &Diagram) -> Option<[f32; 2]> {
     match d {
         Diagram::Image { size, .. } => Some(*size),
@@ -2360,7 +2360,7 @@ mod tests {
             );
             assert!(image.width() as u64 * image.height() as u64 <= 4_000_000);
             assert!(size(&d).is_some());
-            let _ = view(&d, 1., "Menlo", 12.);
+            let _ = view::<()>(&d, 1., "Menlo", 12.);
         }
     }
 
@@ -2383,7 +2383,7 @@ mod tests {
         ] {
             let d = build(src);
             assert!(!matches!(d, Diagram::Error(_)), "{src}");
-            let _ = view(&d, 1., "Menlo", 12.);
+            let _ = view::<()>(&d, 1., "Menlo", 12.);
         }
         assert!(matches!(build("not a diagram"), Diagram::Error(_)));
     }
