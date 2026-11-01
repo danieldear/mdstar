@@ -45,6 +45,7 @@ const EDGE_FONT: f32 = 12.;
 const MARGIN: f32 = 6.;
 
 pub enum Diagram {
+    Pending,
     Graph(Graph),
     Sequence(Sequence),
     Pie {
@@ -58,6 +59,131 @@ pub enum Diagram {
         size: [f32; 2],
     },
     Error(String),
+}
+
+// Live rendering uses one bounded worker; synchronous rendering is reserved
+// for explicit export and the legacy non-UI helper.
+type Wake = std::sync::Arc<dyn Fn() + Send + Sync>;
+const PREVIEW_BYTES: usize = 32 * 1024 * 1024;
+#[derive(Default)]
+struct PreviewCache {
+    ready: HashMap<String, std::sync::Arc<Diagram>>,
+    order: std::collections::VecDeque<String>,
+    pending: std::collections::HashSet<String>,
+    mounted: std::collections::HashSet<String>,
+}
+struct PreviewWorker {
+    jobs: std::sync::mpsc::SyncSender<String>,
+    cache: std::sync::Arc<std::sync::Mutex<PreviewCache>>,
+}
+static PREVIEWS: std::sync::OnceLock<Option<PreviewWorker>> = std::sync::OnceLock::new();
+static WAKE: std::sync::Mutex<Option<Wake>> = std::sync::Mutex::new(None);
+pub fn set_waker(wake: Wake) {
+    *WAKE.lock().unwrap_or_else(|e| e.into_inner()) = Some(wake.clone());
+    if PREVIEWS.get().and_then(Option::as_ref).is_some_and(|w| {
+        !w.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .ready
+            .is_empty()
+    }) {
+        wake();
+    }
+}
+fn preview_weight(source: &str, d: &Diagram) -> usize {
+    // Include a conservative native-layout allowance, not just RGBA pixels.
+    source.len()
+        + match d {
+            Diagram::Image { image, .. } => image.pixels().len(),
+            Diagram::Error(_) | Diagram::Pending => 256,
+            _ => source.len().saturating_mul(64),
+        }
+}
+fn previews() -> Option<&'static PreviewWorker> {
+    PREVIEWS.get_or_init(|| {
+        let (jobs, rx) = std::sync::mpsc::sync_channel::<String>(8);
+        let cache = std::sync::Arc::new(std::sync::Mutex::new(PreviewCache::default()));
+        let sink = cache.clone();
+        std::thread::Builder::new().name("mdstar-diagrams".into()).spawn(move || {
+            while let Ok(source) = rx.recv() {
+                let mut drawing = std::panic::catch_unwind(|| build(&source))
+                    .unwrap_or_else(|_| Diagram::Error("Diagram renderer could not process this source".into()));
+                let mut c = sink.lock().unwrap_or_else(|e| e.into_inner());
+                let mut weight = c.ready.iter().map(|(s, d)| preview_weight(s, d)).sum::<usize>();
+                let wanted = preview_weight(&source, &drawing);
+                while c.ready.len() >= 64 || weight.saturating_add(wanted) > PREVIEW_BYTES {
+                    let victim = c.order.iter().position(|s| !c.mounted.contains(s));
+                    let Some(i) = victim else { break; };
+                    if let Some(key) = c.order.remove(i) {
+                        if let Some(d) = c.ready.remove(&key) { weight = weight.saturating_sub(preview_weight(&key, &d)); }
+                    }
+                }
+                if c.ready.len() >= 64 {
+                    c.pending.remove(&source); drop(c);
+                    if let Some(wake) = WAKE.lock().unwrap_or_else(|e| e.into_inner()).clone() { wake(); }
+                    continue;
+                }
+                if weight.saturating_add(wanted) > PREVIEW_BYTES {
+                    // Do not evict currently visible results and regenerate them
+                    // on every frame; retain an explicit source/error fallback.
+                    drawing = Diagram::Error("Visible diagram previews exceed the preview budget; source is retained".into());
+                }
+                c.pending.remove(&source); c.order.push_back(source.clone());
+                c.ready.insert(source, std::sync::Arc::new(drawing));
+                drop(c);
+                let wake = WAKE.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if let Some(wake) = wake { wake(); }
+            }
+        }).ok()?;
+        Some(PreviewWorker { jobs, cache })
+    }).as_ref()
+}
+pub fn begin_frame() {
+    if let Some(Some(w)) = PREVIEWS.get() {
+        w.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .mounted
+            .clear();
+    }
+}
+pub fn peek(source: &str) -> Option<std::sync::Arc<Diagram>> {
+    PREVIEWS
+        .get()?
+        .as_ref()?
+        .cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .ready
+        .get(source)
+        .cloned()
+}
+pub fn request(source: &str) -> std::sync::Arc<Diagram> {
+    if source.len() > 64 * 1024 {
+        return std::sync::Arc::new(Diagram::Error(
+            "Diagram exceeds the 64 KiB source limit".into(),
+        ));
+    }
+    let Some(w) = previews() else {
+        return std::sync::Arc::new(Diagram::Error("Could not start diagram worker".into()));
+    };
+    let mut c = w.cache.lock().unwrap_or_else(|e| e.into_inner());
+    if c.mounted.len() >= 64 && !c.mounted.contains(source) {
+        return std::sync::Arc::new(Diagram::Error(
+            "Too many mounted diagram previews; source is retained".into(),
+        ));
+    }
+    c.mounted.insert(source.to_owned());
+    if let Some(d) = c.ready.get(source) {
+        return d.clone();
+    }
+    if !c.pending.contains(source)
+        && c.pending.len() < 8
+        && w.jobs.try_send(source.to_owned()).is_ok()
+    {
+        c.pending.insert(source.to_owned());
+    }
+    std::sync::Arc::new(Diagram::Pending)
 }
 
 /// The diagram for a Mermaid source, laid out once and cached.
@@ -90,8 +216,21 @@ pub fn diagram(source: &str) -> Rc<Diagram> {
 }
 
 fn build(source: &str) -> Diagram {
-    if source.len() > 64 * 1024 {
+    if source.len() > 64 * 1024 || source.lines().count() > 1024 {
         return Diagram::Error("Diagram exceeds the 64 KiB source limit".into());
+    }
+    let mut depth = 0usize;
+    for byte in source.bytes() {
+        match byte {
+            b'{' | b'[' | b'(' => {
+                depth += 1;
+                if depth > 48 {
+                    return Diagram::Error("Diagram nesting exceeds the safe limit".into());
+                }
+            }
+            b'}' | b']' | b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
     }
     let native = build_native(source);
     if matches!(native, Diagram::Error(_) | Diagram::Text(_)) {
@@ -177,10 +316,16 @@ fn build_native(source: &str) -> Diagram {
         Err(e) => return Diagram::Error(e.to_string()),
     };
     let parsed = match kind {
-        DiagramKind::Flowchart => {
-            mermaid_text::parser::flowchart::parse(source).map(|g| Diagram::Graph(layout(&g)))
-        }
+        DiagramKind::Flowchart => mermaid_text::parser::flowchart::parse(source).map(|g| {
+            if g.nodes.len() > 256 || g.edges.len() > 512 {
+                return Diagram::Error("Diagram exceeds the safe node/edge limit".into());
+            }
+            Diagram::Graph(layout(&g))
+        }),
         DiagramKind::State => mermaid_text::parser::state::parse(source).map(|mut g| {
+            if g.nodes.len() > 256 || g.edges.len() > 512 {
+                return Diagram::Error("Diagram exceeds the safe node/edge limit".into());
+            }
             // The parser defaults to left-to-right for terminals; Mermaid
             // draws state diagrams top to bottom unless told otherwise.
             if !source
@@ -196,9 +341,14 @@ fn build_native(source: &str) -> Diagram {
             }
             Diagram::Graph(layout(&g))
         }),
-        DiagramKind::Sequence => {
-            mermaid_text::parser::sequence::parse(source).map(|s| Diagram::Sequence(sequence(&s)))
-        }
+        DiagramKind::Sequence => mermaid_text::parser::sequence::parse(source).map(|s| {
+            if s.participants.len() > 128 || s.messages.len() > 512 {
+                return Diagram::Error(
+                    "Sequence exceeds the safe participant/message limit".into(),
+                );
+            }
+            Diagram::Sequence(sequence(&s))
+        }),
         DiagramKind::Pie => mermaid_text::parser::pie::parse(source).map(|p| Diagram::Pie {
             title: p.title.clone(),
             slices: p
@@ -219,7 +369,7 @@ pub fn size(d: &Diagram) -> Option<[f32; 2]> {
         Diagram::Graph(g) => Some(g.size),
         Diagram::Sequence(s) => Some(s.size),
         Diagram::Pie { title, .. } => Some([360., 200. + if title.is_some() { 30. } else { 0. }]),
-        Diagram::Text(_) | Diagram::Error(_) => None,
+        Diagram::Pending | Diagram::Text(_) | Diagram::Error(_) => None,
     }
 }
 
@@ -1485,13 +1635,14 @@ fn label_at(
 /// The diagram drawn at scale `s`; text diagrams use `mono`.
 pub fn view(d: &Diagram, s: f32, mono: &str, mono_size: f32) -> Element<App> {
     match d {
+        Diagram::Pending => text("Rendering diagram…").into(),
         Diagram::Graph(g) => graph_view(g, s),
         Diagram::Sequence(q) => sequence_view(q, s),
         Diagram::Pie { title, slices } => {
             let mut parts: Vec<Element<App>> = Vec::new();
             if let Some(title) = title {
                 parts.push(
-                    text(title.clone())
+                    mdstar_render_volt::literal(title)
                         .font_size(14. * s)
                         .font_weight(600)
                         .into(),
@@ -1514,13 +1665,13 @@ pub fn view(d: &Diagram, s: f32, mono: &str, mono_size: f32) -> Element<App> {
             .background_image(image.clone().background().fit(ImageFit::Contain))
             .accessible_label("Mermaid diagram")
             .into(),
-        Diagram::Text(art) => text(art.clone())
+        Diagram::Text(art) => mdstar_render_volt::literal(art)
             .font_family(mono.to_owned())
             .font_size(mono_size)
             .line_height(1.2)
             .no_wrap(true)
             .into(),
-        Diagram::Error(e) => text(e.clone()).into(),
+        Diagram::Error(e) => mdstar_render_volt::literal(e),
     }
 }
 

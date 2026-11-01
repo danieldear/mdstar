@@ -186,8 +186,12 @@ fn expand_emoji_shortcodes(input: &str) -> String {
 
         let candidate_start = start + 1;
         let search_end = (candidate_start + MAX_SHORTCODE_LEN + 1).min(input.len());
-        let closing = input[candidate_start..search_end]
-            .find(':')
+        // The byte-budget endpoint may fall inside a Unicode character.
+        // Searching for ASCII ':' in bytes is safe; its position is always a
+        // character boundary when we subsequently slice the shortcode.
+        let closing = input.as_bytes()[candidate_start..search_end]
+            .iter()
+            .position(|&byte| byte == b':')
             .map(|relative| candidate_start + relative);
 
         let Some(end) = closing else {

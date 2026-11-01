@@ -156,6 +156,28 @@ pub fn parse_document_ir_with_diagnostics(input: &str, origin: &str) -> Result<D
     let root = markdown::to_mdast(&normalized, &options)
         .map_err(|message| MarkdownError::ParserAdapter(message.reason.clone()))?;
 
+    let blocks = match &root {
+        Node::Root(root) => crate::nodes_to_blocks(&root.children),
+        _ => Vec::new(),
+    };
+    let headings = blocks
+        .iter()
+        .filter_map(|b| match b {
+            crate::Block::Heading { level, children } => Some(crate::HeadingMetadata {
+                level: *level,
+                text: crate::inlines_to_plain_text(children),
+            }),
+            _ => None,
+        })
+        .collect();
+    let parsed = crate::Document {
+        blocks,
+        metadata: crate::DocumentMetadata { headings },
+    };
+    let diagnostics = crate::collect_diagnostics(input, &parsed)
+        .iter()
+        .map(diagnostic_to_ir)
+        .collect();
     let document_id = format!("doc-{:016x}", stable_hash(origin));
     let mut ids = IdAllocator::default();
     let mut blocks = Vec::new();
@@ -176,12 +198,6 @@ pub fn parse_document_ir_with_diagnostics(input: &str, origin: &str) -> Result<D
             text: inline_plain_text(&block.inlines),
             anchor: heading_anchor(&inline_plain_text(&block.inlines)),
         })
-        .collect();
-
-    let diagnostics = crate::parse_markdown_with_diagnostics(input)?
-        .diagnostics
-        .iter()
-        .map(diagnostic_to_ir)
         .collect();
 
     Ok(DocumentIr {
