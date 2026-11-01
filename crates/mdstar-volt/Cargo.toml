@@ -2,7 +2,7 @@
 name = "mdstar-volt"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 description = "MD Star reader drawn natively with Volt UI Kit"
 publish = false
@@ -86,7 +86,7 @@ content-types = ["public.folder"]
 
 [dependencies]
 mdstar-core = { path = "../mdstar-core" }
-mdstar-render-volt = { path = "../mdstar-render-volt" }
+mdstar-render-volt = { path = "../mdstar-render-volt", features = ["diagrams"] }
 mermaid-text = "0.16.1"
 # Match Volt Editor for diagram families the terminal parser cannot draw.
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }

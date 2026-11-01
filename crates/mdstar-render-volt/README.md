@@ -13,7 +13,7 @@ MD Star parser -> document IR ------+-> shared native units/prose/code/tables
 Volt streaming parser -> IR adapter +              +-> host application
                                                   |
                                          explicit Media adapter
-                                 MD Star diagrams / Volt math+Mermaid worker
+                                 shared native Mermaid / Volt math worker
 ```
 
 ## Contracts
@@ -24,8 +24,8 @@ Volt streaming parser -> IR adapter +              +-> host application
   state and an optional scoped link callback. Rendering does not read files or
   fetch URLs; image/resource trust policy remains in the host.
 - `Media` supplies diagrams, display math and optional typeset inline math.
-  Volt keeps its existing background renderer and PNG-copy controls through this
-  hook rather than replacing equations with MD Star's Unicode fallback.
+  Volt keeps its worker and PNG-copy controls, uses shared native Mermaid and
+  retains its typeset math rather than MD Star's Unicode fallback.
 - `row` owns the reader's margins/context-menu shell; `content` renders only a
   unit, allowing Plan/chat to retain their existing session/selection/scroll shell.
 - Text is chunked on UTF-8 boundaries below the kit's 8 KiB and styled-span limits
@@ -60,3 +60,28 @@ partial fences, UTF-8 selections/context menus, theme changes, math in tables an
 paragraphs, large diagrams, PNG copying, resizing/session switches and MD Star
 reader find/export. Use existing projects/fixtures rather than creating another
 persistent dummy project.
+
+## Shared Mermaid media (follow-up)
+
+The opt-in `diagrams` feature now contains the actual MD Star native diagram
+engine, not only a media callback. Both apps use this module: common flow/state/
+sequence diagrams use native kit text and a compact layered layout, while other
+families retain a bounded offline SVG/raster fallback. The fallback excludes
+LastResort placeholder faces, whose all-glyph coverage can replace an entire
+label during SVG font fallback. No remote resources or browser runtime are used.
+
+Flowchart nodes/labels/edges use the strict parser, preserving fan-out such as
+`A & B --> C` rather than inventing an `A & B` node; the native model retains
+nested-group/style metadata. Native canvas paths are split below toolkit budgets.
+The native layout still inherits the outer graph direction for nested groups;
+this is not a claim of complete Mermaid CSS, interaction or layout compatibility.
+The optional media dependencies match MD Star's existing versions; enabling
+`diagrams` requires Rust 1.92 because `mermaid-text 0.16.8` does. Base/core/HTML
+workspace features remain independent of that optional backend.
+
+Volt keeps its own bounded worker and calls this engine from that worker, not
+from scrolling/paint. Its math engine is unchanged, and PNG copying builds the
+same native scene as the live diagram. Wide diagrams scroll horizontally rather
+than shrinking labels below the reading floor. Visual layout, emoji rendering,
+large-graph performance, and pasted image acceptance remain manual checks; no
+tests or native app launches were performed for this follow-up.

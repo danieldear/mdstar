@@ -29,3 +29,6 @@ pub trait Media<C: Host> {
         None
     }
 }
+
+#[cfg(feature = "diagrams")]
+pub mod diagram;
