@@ -47,8 +47,7 @@ fn present(drawing: &diagram::Diagram, block: &BlockIr, ctx: &Ctx) -> Element<Ap
             ))
             .font_size(12.)
             .color(ColorToken::Muted)
-            .selectable(false)
-            .into(),
+            .selectable(false),
         ])
         .key(format!("{}-diagram", key_of(&block.id)))
         .gap(6., Axis::Vertical)

@@ -114,8 +114,9 @@ fn previews() -> Option<&'static PreviewWorker> {
                 while c.ready.len() >= 64 || weight.saturating_add(wanted) > PREVIEW_BYTES {
                     let victim = c.order.iter().position(|s| !c.mounted.contains(s));
                     let Some(i) = victim else { break; };
-                    if let Some(key) = c.order.remove(i) {
-                        if let Some(d) = c.ready.remove(&key) { weight = weight.saturating_sub(preview_weight(&key, &d)); }
+                    if let Some(key) = c.order.remove(i)
+                        && let Some(d) = c.ready.remove(&key) {
+                        weight = weight.saturating_sub(preview_weight(&key, &d));
                     }
                 }
                 if c.ready.len() >= 64 {
@@ -1644,8 +1645,7 @@ pub fn view(d: &Diagram, s: f32, mono: &str, mono_size: f32) -> Element<App> {
                 parts.push(
                     mdstar_render_volt::literal(title)
                         .font_size(14. * s)
-                        .font_weight(600)
-                        .into(),
+                        .font_weight(600),
                 );
             }
             parts.push(
@@ -1669,8 +1669,7 @@ pub fn view(d: &Diagram, s: f32, mono: &str, mono_size: f32) -> Element<App> {
             .font_family(mono.to_owned())
             .font_size(mono_size)
             .line_height(1.2)
-            .no_wrap(true)
-            .into(),
+            .no_wrap(true),
         Diagram::Error(e) => mdstar_render_volt::literal(e),
     }
 }
