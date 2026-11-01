@@ -10,6 +10,14 @@ publish = false
 [workspace]
 resolver = "2"
 
+[features]
+default = []
+diagrams = ["dep:mermaid-text", "dep:mermaid-rs-renderer", "dep:resvg"]
+
 [dependencies]
 mdstar-core = { path = "../mdstar-core" }
 volt-ui-kit = { path = "../../../rust/volt-ui-kit", default-features = false, features = ["rust-ui"] }
+
+mermaid-text = { version = "=0.16.8", optional = true }
+mermaid-rs-renderer = { version = "=0.3.1", default-features = false, optional = true }
+resvg = { version = "=0.45.1", default-features = false, features = ["text", "system-fonts"], optional = true }
