@@ -13,7 +13,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  VOLT_UI_KIT_REF: a9f6163db29b8ca49e1914dd58dd8e2cef577ed5
+  VOLT_UI_KIT_REF: f3e559d2c112843412c8b3a251975db51acf6716
   TEAM_ID: A822K85XUW
 
 jobs:

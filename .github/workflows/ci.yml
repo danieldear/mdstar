@@ -8,7 +8,7 @@ env:
   CARGO_TERM_COLOR: always
   # The app builds against this Volt UI Kit commit until the kit is published.
   # It is a private repository: VOLT_UI_KIT_TOKEN reads it.
-  VOLT_UI_KIT_REF: a9f6163db29b8ca49e1914dd58dd8e2cef577ed5
+  VOLT_UI_KIT_REF: f3e559d2c112843412c8b3a251975db51acf6716
 
 jobs:
   rust:
