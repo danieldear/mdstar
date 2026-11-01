@@ -1,11 +1,10 @@
 //! Find in document: case-insensitive matches over the rendered text.
 
-
 /// Matches stop being counted past this, so a one-letter query in a huge
 /// document stays fast; the count then reads "1000+".
 pub const MAX_HITS: usize = 1000;
 
-pub use mdstar_render_volt::find::{Hit, needle, matches};
+pub use mdstar_render_volt::find::{Hit, matches, needle};
 
 #[derive(Default)]
 pub struct Find {

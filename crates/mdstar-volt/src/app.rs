@@ -541,7 +541,9 @@ impl App {
                 let current = self.find.as_ref().and_then(Find::current_hit);
                 self.recount();
                 if let (Some(current), Some(find)) = (current, self.find.as_mut()) {
-                    if let Some(i) = find.hits.iter().position(|h| *h == current) { find.current = i; }
+                    if let Some(i) = find.hits.iter().position(|h| *h == current) {
+                        find.current = i;
+                    }
                 }
             }
             Msg::Autosave(n) if n == self.edits => {
