@@ -81,7 +81,10 @@ xcrun notarytool store-credentials mdstar --apple-id YOU@EXAMPLE.COM --team-id A
 push; `.github/workflows/release.yml` runs `cargo volt release` on an Apple
 silicon runner when a `v*` tag matching this crate's version is pushed, and
 attaches the notarized disk image and its checksum to a draft GitHub release.
-Both fetch Volt UI Kit at the commit in `VOLT_UI_KIT_REF`.
+Both install the packager from the public Git repository at `VOLT_UI_KIT_REF`,
+matching the exact toolkit revision in the native Cargo manifests. Ordinary CI
+needs no toolkit token or signing secrets; only the explicit release workflow
+uses the signing/notarization secrets below.
 
 They need these repository secrets (Settings → Secrets and variables →
 Actions). `gh secret set NAME --repo danieldear/mdstar` asks for each value
@@ -89,7 +92,6 @@ without echoing it:
 
 | Secret | Value |
 |---|---|
-| `VOLT_UI_KIT_TOKEN` | A fine-grained token with read-only *Contents* access to `danieldear/volt-ui-kit` |
 | `MACOS_CERTIFICATE_P12` | The Developer ID Application certificate and key, exported from Keychain Access as `.p12`, base64-encoded: `base64 -i DeveloperID.p12 \| gh secret set MACOS_CERTIFICATE_P12 --repo danieldear/mdstar` |
 | `MACOS_CERTIFICATE_PASSWORD` | The password chosen when exporting the `.p12` |
 | `APPLE_ID` | The Apple ID that notarizes |
@@ -101,5 +103,10 @@ To release: set `version` in `Cargo.toml`, commit, then
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-Install `cargo volt` from the kit with
-`cargo install --path ../../../rust/volt-ui-kit --features dev-tools --bin cargo-volt`.
+Install `cargo volt` from the matching Git revision (use the `rev` in this
+crate's Cargo.toml):
+
+```sh
+cargo install --locked --git https://github.com/danieldear/volt-ui-kit.git \
+  --rev <toolkit-revision> --features dev-tools --bin cargo-volt
+```

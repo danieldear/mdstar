@@ -27,7 +27,7 @@ mdstar-volt                     mdstar-render-html
 
 The root Cargo workspace contains `mdstar-core` and `mdstar-render-html`.
 `crates/mdstar-volt` is a separate workspace with its own lockfile because it
-consumes `../../../rust/volt-ui-kit` as a path dependency. GitHub workflows
+consumes the same immutable public Volt UI Kit Git revision as the shared renderer. GitHub workflows
 fetch the kit into that relative location at a pinned commit.
 Run both workspaces' tests; root `cargo test --workspace` alone does not test
 the application.

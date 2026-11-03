@@ -24,7 +24,7 @@ version tag (v<crates/mdstar-volt version>)
 
 - App tests and library tests pass; CI builds the app and Quick Look bundle.
 - `VOLT_UI_KIT_REF` matches in CI and release workflows.
-- `VOLT_UI_KIT_TOKEN` can read the pinned kit repository.
+- Native manifests and `VOLT_UI_KIT_REF` pin the same public toolkit Git revision; no toolkit token or sibling checkout is required.
 - `MACOS_CERTIFICATE_P12` is **nonempty base64** of a password-protected PKCS#12
   export containing the Developer ID Application certificate **and private key**.
 - `MACOS_CERTIFICATE_PASSWORD` matches that export.
