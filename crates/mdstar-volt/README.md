@@ -1,11 +1,11 @@
 # MD Star on Volt
 
-The native MD Star app, drawn with [Volt UI Kit](../../../rust/volt-ui-kit):
+The native MD Star app, drawn with [Volt UI Kit](https://github.com/danieldear/volt-ui-kit):
 a Markdown reader and editor with a workspace file tree, tabs, find, a
 split editor with live preview and a native macOS shell.
 
-It depends on a local checkout of the kit, so it builds outside the main
-workspace:
+Cargo fetches its exact toolkit Git revision automatically; no sibling toolkit
+checkout or private toolkit token is required. It builds outside the main workspace:
 
 ```sh
 cargo run --release -- README.md      # a file, or a folder to browse

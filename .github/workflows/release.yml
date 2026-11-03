@@ -13,7 +13,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  VOLT_UI_KIT_REF: 67f20efac05787cc482e18b2f7915d5e7209825d
+  VOLT_UI_KIT_REF: e07095530890019a5c6ee7b6c7972604e526523f
   TEAM_ID: A822K85XUW
 
 jobs:
@@ -37,21 +37,11 @@ jobs:
             exit 1
           fi
 
-      - name: Fetch Volt UI Kit
-        working-directory: .
-        env:
-          TOKEN: ${{ secrets.VOLT_UI_KIT_TOKEN }}
-        run: |
-          kit="$GITHUB_WORKSPACE/../rust/volt-ui-kit"
-          git clone --filter=blob:none "https://x-access-token:${TOKEN}@github.com/danieldear/volt-ui-kit.git" "$kit"
-          git -C "$kit" checkout --detach "$VOLT_UI_KIT_REF"
-          git -C "$kit" remote set-url origin https://github.com/danieldear/volt-ui-kit.git
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo volt
-        run: cargo install --locked --path "$GITHUB_WORKSPACE/../rust/volt-ui-kit" --features dev-tools --bin cargo-volt
+        run: cargo install --locked --git https://github.com/danieldear/volt-ui-kit.git --rev "$VOLT_UI_KIT_REF" --features dev-tools --bin cargo-volt
 
       # A throwaway keychain holds the Developer ID certificate and the
       # notarization credentials for this run only.
