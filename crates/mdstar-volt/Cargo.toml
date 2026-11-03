@@ -103,7 +103,7 @@ ratatui-textarea = "0.9.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 notify = "6"
-volt-ui-kit = { git = "https://github.com/danieldear/volt-ui-kit.git", rev = "e07095530890019a5c6ee7b6c7972604e526523f", features = ["native-gpu", "native-desktop"] }
+volt-ui-kit = { git = "https://github.com/danieldear/volt-ui-kit.git", rev = "c3d0f70947abe31822755cb505672acba67b14b7", features = ["native-gpu", "native-desktop"] }
 
 # Finder "Open With" and double-click: AppKit hands the app file URLs.
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -16,7 +16,7 @@ diagrams = ["dep:mermaid-text", "dep:mermaid-rs-renderer", "dep:resvg"]
 
 [dependencies]
 mdstar-core = { path = "../mdstar-core" }
-volt-ui-kit = { git = "https://github.com/danieldear/volt-ui-kit.git", rev = "e07095530890019a5c6ee7b6c7972604e526523f", default-features = false, features = ["rust-ui"] }
+volt-ui-kit = { git = "https://github.com/danieldear/volt-ui-kit.git", rev = "c3d0f70947abe31822755cb505672acba67b14b7", default-features = false, features = ["rust-ui"] }
 
 mermaid-text = { version = "=0.16.8", optional = true }
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false, optional = true }

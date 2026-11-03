@@ -7,7 +7,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # Match the exact toolkit revision in both native Cargo manifests.
-  VOLT_UI_KIT_REF: e07095530890019a5c6ee7b6c7972604e526523f
+  VOLT_UI_KIT_REF: c3d0f70947abe31822755cb505672acba67b14b7
 
 jobs:
   rust:
