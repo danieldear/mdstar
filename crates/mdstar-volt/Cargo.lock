@@ -4518,6 +4518,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "volt-ui-kit"
 version = "0.5.0"
+source = "git+https://github.com/danieldear/volt-ui-kit.git?rev=c3d0f70947abe31822755cb505672acba67b14b7#c3d0f70947abe31822755cb505672acba67b14b7"
 dependencies = [
  "accesskit",
  "accesskit_winit",
