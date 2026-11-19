@@ -1864,6 +1864,7 @@ fn canvas_layers<C: 'static>(scene: Canvas, size: [f32; 2]) -> Vec<Element<C>> {
                     },
                     color: draw.color.clone(),
                     stroke: draw.stroke,
+                    style: draw.style.clone(),
                 });
                 part.push(PathCommand::Move(at));
             }
@@ -1887,6 +1888,7 @@ fn canvas_layers<C: 'static>(scene: Canvas, size: [f32; 2]) -> Vec<Element<C>> {
                 path: VectorPath { commands: part },
                 color: draw.color,
                 stroke: draw.stroke,
+                style: draw.style,
             });
         }
     }
